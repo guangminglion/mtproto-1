@@ -1,6 +1,5 @@
-defmodule MtprotoTest do
+defmodule MTProtoTest do
   use ExUnit.Case
-  doctest Mtproto
 
   test "the truth" do
     assert 1 + 1 == 2
