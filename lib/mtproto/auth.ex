@@ -18,6 +18,30 @@ defmodule MTProto.Auth do
     <<pg_int :: big-unsigned-integer-size(64)>> = pg
 
     %{nonce: nonce, server_nonce: server_nonce,
-      pg: pg, server_public_key_fingerprints: server_public_key_fingerprints}
+      pg: pg_int, server_public_key_fingerprints: server_public_key_fingerprints}
+  end
+
+  def factorize(n) do
+    pollard(n)
+  end
+
+  defp gcd(a,0), do: abs(a)
+  defp gcd(a,b), do: gcd(b, rem(a,b))
+
+  defp pollard(n) do
+    pollard(n, :random.uniform(n-2), 1, 0, 2, 1)
+  end
+  defp pollard(n, x, y, i, stage, factor) when factor != 1 do
+    [factor, div(n, factor)]
+  end
+  defp pollard(n, x, y, i, stage, factor) do
+    if i == stage do
+      y = x
+      stage = stage*2
+    end
+    x = rem((x*x - 1), n)
+    i = i + 1
+    factor = gcd(n, abs(x-y))
+    pollard(n, x, y, i, stage, factor)
   end
 end

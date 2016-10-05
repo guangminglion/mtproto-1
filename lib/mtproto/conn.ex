@@ -92,6 +92,7 @@ defmodule MTProto.Conn do
       :req_pq ->
         res_pq = Auth.res_pq(decoded)
         IO.inspect res_pq
+        IO.inspect Auth.factorize(res_pq.pg)
       _ ->
         :ok
     end
