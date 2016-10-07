@@ -2,6 +2,8 @@ defmodule MTProto.Auth do
   alias TL.Str
   alias TL.Vec
 
+  import Bitwise, only: [bxor: 2]
+
   def make_nonce(size \\ 16) do
     :crypto.strong_rand_bytes(size)
   end
@@ -133,6 +135,56 @@ defmodule MTProto.Auth do
       Str.encode(encrypted_client_dh_inner_data) :: binary>>
   end
 
+  def make_auth_key(g_a, b, dh_prime) do
+    mod_pow(g_a, b, dh_prime)
+  end
+
+  def auth_key_hash(auth_key) do
+    :binary.part(sha1(auth_key), 12, 8)
+  end
+
+  def make_nonce_hash1(new_nonce, auth_key) do
+    auth_key_hash = :binary.part(sha1(auth_key), 0, 8)
+    nonce =
+      <<new_nonce :: binary-size(32), 1 :: size(8),
+        auth_key_hash :: binary-size(8)>>
+
+    :binary.part(sha1(nonce), 4, 16)
+  end
+
+  def make_server_salt(new_nonce, server_nonce) do
+    server_salt = :binary.part(new_nonce, 0, 8)
+    binary_bxor(server_salt, :binary.part(server_nonce, 0, 8))
+  end
+
+  # dh_gen_ok
+  def dh_gen(<<0x3bcbf734 :: little-size(32), packet :: binary>>) do
+    <<nonce :: binary-size(16),
+      server_nonce :: binary-size(16),
+      new_nonce_hash1 :: binary-size(16)>> = packet
+
+    %{status: :ok, nonce: nonce, server_nonce: server_nonce,
+      new_nonce_hash1: new_nonce_hash1}
+  end
+  # dh_gen_retry
+  def dh_gen(<<0x46dc1fb9 :: little-size(32), packet :: binary>>) do
+    <<nonce :: binary-size(16),
+      server_nonce :: binary-size(16),
+      new_nonce_hash2 :: binary-size(16)>> = packet
+
+    %{status: :retry, nonce: nonce, server_nonce: server_nonce,
+      new_nonce_hash2: new_nonce_hash2}
+  end
+  # dh_gen_fail
+  def dh_gen(<<0xa69dae02 :: little-size(32), packet :: binary>>) do
+    <<nonce :: binary-size(16),
+      server_nonce :: binary-size(16),
+      new_nonce_hash3 :: binary-size(16)>> = packet
+
+    %{status: :fail, nonce: nonce, server_nonce: server_nonce,
+      new_nonce_hash3: new_nonce_hash3}
+  end
+
   ### Pollard implementation
 
   defp gcd(a,0), do: abs(a)
@@ -222,5 +274,18 @@ defmodule MTProto.Auth do
     else
       {:error, reason} -> {:error, reason}
     end
+  end
+
+  defp binary_bxor(bin1, bin2) do
+    size1 = bit_size(bin1)
+    size2 = bit_size(bin2)
+
+    <<int1 :: size(size1)>> = bin1
+    <<int2 :: size(size2)>> = bin2
+
+    int3 = bxor(int1, int2)
+    size3 = max(size1, size2)
+
+    <<int3 :: size(size3)>>
   end
 end

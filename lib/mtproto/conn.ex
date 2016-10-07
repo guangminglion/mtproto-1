@@ -14,11 +14,13 @@ defmodule MTProto.Conn do
   # ...
 
   defmodule State do
-    defstruct [:host, :port, :socket, :session_id, :auth_state, :auth_params]
+    defstruct [:host, :port, :socket, :session_id,
+               :auth_state, :auth_params,
+               :auth_key, :auth_key_hash, :server_salt]
   end
 
   defmodule AuthParams do
-    defstruct [:nonce, :server_nonce, :new_nonce]
+    defstruct [:nonce, :server_nonce, :new_nonce, :nonce_hash1]
   end
 
   def init({host}) do
@@ -32,7 +34,7 @@ defmodule MTProto.Conn do
       {:ok, socket} ->
         send(self, :after_connect)
         session_id = :crypto.strong_rand_bytes(64)
-        {:ok, %{state | socket: socket, session_id: session_id, auth_state: :connected}}
+        {:ok, %{state|socket: socket, session_id: session_id, auth_state: :connected}}
       {:error, _} ->
         {:backoff, 1000, state}
     end
@@ -88,7 +90,7 @@ defmodule MTProto.Conn do
     IO.puts " |-| packet: #{inspect packet}"
     decoded = decode_packet(packet)
 
-    IO.puts " --- decoded packet: #{inspect decoded}"
+    # IO.puts " --- decoded packet: #{inspect decoded}"
 
     case state.auth_state do
       :req_pq ->
@@ -140,6 +142,17 @@ defmodule MTProto.Conn do
             b = Auth.make_b
             g_b = Auth.make_g_b(server_dh_inner_data.g, b, server_dh_inner_data.dh_prime)
 
+            # make auth_key, auth_key_hash
+            auth_key = Auth.make_auth_key(server_dh_inner_data.g_a, b,
+              server_dh_inner_data.dh_prime)
+            auth_key_hash = Auth.auth_key_hash(auth_key)
+
+            # make server_salt
+            server_salt = Auth.make_server_salt(auth_params.new_nonce, auth_params.server_nonce)
+
+            # make nonce_hash1
+            nonce_hash1 = Auth.make_nonce_hash1(auth_params.new_nonce, auth_key)
+
             # decode client_dh_inner_data
             client_dh_inner_data = Auth.client_dh_inner_data(auth_params.nonce,
               auth_params.server_nonce, 0, g_b)
@@ -156,11 +169,33 @@ defmodule MTProto.Conn do
             # send it to the server
             :gen_tcp.send(socket, encode_packet(set_client_dh_params, state))
 
-            {:noreply, %{state|auth_state: :dh_gen}}
+            # update auth_params
+            auth_params = %{auth_params|nonce_hash1: nonce_hash1}
+
+            {:noreply, %{state|auth_state: :dh_gen, auth_key: auth_key,
+                               auth_key_hash: auth_key_hash, server_salt: server_salt,
+                               auth_params: auth_params}}
         end
       :dh_gen ->
         # decode dh_gen_ok, dh_gen_fail, dh_gen_retry
-        {:noreply, state}
+        case Auth.dh_gen(decoded) do
+          %{status: :fail} ->
+            {:stop, :dh_gen_fail, state}
+          %{status: :retry} ->
+            {:stop, :dh_gen_retry, state}
+          %{status: :ok} = dh_gen ->
+            # check nonce_hash1
+            if state.auth_params.nonce_hash1 == dh_gen.new_nonce_hash1 do
+              IO.puts " -- authenticated"
+              IO.puts " --- auth_key      #{inspect state.auth_key}"
+              IO.puts " --- auth_key_hash #{inspect state.auth_key_hash}"
+              IO.puts " --- server_salt   #{inspect state.server_salt}"
+
+              {:noreply, %{state|auth_state: :ok, auth_params: nil}}
+            else
+              {:stop, :mismatched_nonce_hash1, state}
+            end
+        end
       _ ->
         {:noreply, state}
     end
