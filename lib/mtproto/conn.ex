@@ -80,6 +80,7 @@ defmodule MTProto.Conn do
     {:stop, :tcp_closed, state}
   end
   def handle_info({:tcp, socket, packet}, state) do
+    IO.puts " |-| packet: #{inspect packet}"
     decoded = decode_packet(packet)
 
     # IO.puts " -- packet:"
@@ -91,13 +92,30 @@ defmodule MTProto.Conn do
     case state.auth_state do
       :req_pq ->
         res_pq = Auth.res_pq(decoded)
-        IO.inspect res_pq
-        IO.inspect Auth.factorize(res_pq.pg)
+        [p, q] = Auth.factorize(res_pq.pq)
+
+        p_q_inner_data = Auth.p_q_inner_data(res_pq.pq, p, q, res_pq.nonce, res_pq.server_nonce)
+
+        [public_key_fingerprint|_] = res_pq.server_public_key_fingerprints
+
+        encrypted_data = Auth.p_q_inner_data_rsa(p_q_inner_data)
+
+        req_dh_params = Auth.req_dh_params(res_pq.nonce, res_pq.server_nonce, p, q,
+          public_key_fingerprint, encrypted_data)
+        req_dh_params_packet = encode_packet(req_dh_params, state)
+
+        :gen_tcp.send(socket, req_dh_params_packet)
+
+        {:noreply, %{state|auth_state: {:req_dh_params}}}
+      {:req_dh_params} ->
+        IO.inspect " ------ REQ_DH_PARAMS"
+        # ...
+        {:noreply, state}
       _ ->
-        :ok
+        {:noreply, state}
     end
 
-    {:noreply, state}
+    # {:noreply, state}
   end
   def handle_info(request, state) do
     IO.puts(" -- handle_info request #{inspect request}")
@@ -110,7 +128,7 @@ defmodule MTProto.Conn do
 
   defp encode_packet(packet, %{session_id: session_id} = state) do
     # FIXME salt
-    salt = 0
+    auth_key_id = 0
     message_counter = 0
 
     # packet_with_meta =
@@ -121,23 +139,24 @@ defmodule MTProto.Conn do
     #     byte_size(packet) :: little-size(32),
     #     packet :: binary>>
     packet_with_meta =
-      <<salt :: 64,
+      <<auth_key_id :: 64,
         generate_message_id :: little-size(64),
         byte_size(packet) :: little-size(32),
         packet :: binary>>
 
-    IO.puts " -- size: #{byte_size(packet)}"
+    # IO.puts " -- size: #{byte_size(packet)}"
 
     <<byte_size(packet_with_meta) :: little-size(32),
       packet_with_meta :: binary>>
   end
 
   defp decode_packet(<<size :: little-size(32), packet_with_meta :: binary-size(size)>>) do
-    <<salt :: 64,
-      message_id :: little-size(64),
-      packet_size :: little-size(32),
-      packet :: binary-size(packet_size)>> = packet_with_meta
-
-    packet
+    case packet_with_meta do
+      <<error_reason :: little-signed-integer-size(32)>> ->
+        {:error, error_reason}
+      <<auth_key_id :: 64, message_id :: little-size(64),
+        packet_size :: little-size(32), packet :: binary-size(packet_size)>> ->
+          packet
+    end
   end
 end
