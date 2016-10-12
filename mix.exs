@@ -14,8 +14,7 @@ defmodule MTProto.Mixfile do
   #
   # Type "mix help compile.app" for more information
   def application do
-    [applications: [:logger],
-     mod: {MTProto, []}]
+    [applications: [:crypto, :connection, :tl]]
   end
 
   # Dependencies can be Hex packages:
@@ -29,6 +28,7 @@ defmodule MTProto.Mixfile do
   # Type "mix help deps" for more examples and options
   defp deps do
     [{:connection, "~> 1.0.4"},
-     {:tl, path: "../tl"}]
+     {:tl, "~> 57.0.0-beta"},
+     {:mock, "~> 0.2.0", only: :test}]
   end
 end

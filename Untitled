@@ -1,0 +1,29 @@
+{:ok, client} = MTProto.start_link(self)
+MTProto.authorize(client)
+MTProto.send_request(client, %TL.Auth.SendCode{phone_number: "79610205656", sms_type: 5, api_id: 60834, api_hash: "e23a181e6c92321f5acb57f7040a5d2f", lang_code: "en"})
+MTProto.send_request(client, %TL.Auth.SignIn{phone_number: "79610205656", phone_code_hash: "f4f44e71ad42c445ad", phone_code: "29531"})
+
+
+
+** (EXIT from #PID<0.180.0>) an exception was raised:
+    ** (FunctionClauseError) no function clause matching in TL.Vec.decode_boxed/2
+        (tl) lib/tl/vec.ex:164: TL.Vec.decode_boxed(<<201, 33, 117, 195, 98, 136, 69, 65, 21, 196, 181, 28, 0, 0, 0, 0, 60, 220, 0, 0, 1, 0, 0, 0, 21, 196, 181, 28, 1, 0, 0, 0, 81, 180, 7, 112, 235, 224, 164, 5, 4, 208, 190, 208, 191, 0, 0, 0, 0, 0, ...>>, &TL.Serializer.decode_rest/1)
+        (tl) lib/tl.ex:3469: TL.decode_rest/1
+        (tl) lib/tl.ex:2364: TL.decode/1
+        (mtproto) lib/mtproto.ex:180: MTProto.handle_info/2
+
+
+
+MTProto.send_request(client, %TL.Messages.GetDialogs{offset: 0, max_id: 0, limit: 100})
+
+
+
+
+
+
+NEW API
+
+{:ok, client} = MTProto.start_link(self)
+MTProto.authorize(client)
+MTProto.send_request(client, %TL.Auth.SendCode{api_hash: "e23a181e6c92321f5acb57f7040a5d2f", api_id: 60834, current_number: true, phone_number: "79610205656", allow_flashcall: false})
+MTProto.send_request(client, %TL.Auth.SignIn{phone_number: "79610205656", phone_code_hash: "f4f44e71ad42c445ad", phone_code: "29531"})

@@ -1,291 +1,153 @@
 defmodule MTProto.Auth do
-  alias TL.Str
-  alias TL.Vec
+  alias MTProto.{State, AuthParams}
+  alias MTProto.{Crypto, Math, Packet}
 
-  import Bitwise, only: [bxor: 2]
+  @type state :: %State{}
 
-  def make_nonce(size \\ 16) do
-    :crypto.strong_rand_bytes(size)
+  def init(client, state) do
+    # generate first nonce
+    nonce = Crypto.make_nonce(16)
+
+    # make req_pq#60469778
+    req_pq = TL.MTProto.encode(%TL.MTProto.Req.Pq{nonce: nonce})
+
+    # make auth
+    # :ok = :gen_tcp.send(socket, Packet.encode_bare(req_pq, Math.make_message_id()))
+    send_bare_packet(client, req_pq)
+
+    # create auth_params
+    auth_params = %AuthParams{nonce: nonce}
+
+    %State{state|auth_state: :req_pq, auth_params: auth_params}
   end
 
-  def req_pq(nonce) do
-    <<0x60469778 :: little-size(32),
-      nonce :: binary-size(16)>>
+  @doc """
+  ...
+  """
+  @spec handle(pid, state, binary) :: {:ok, state} | {:error, term, state}
+
+  def handle(client, %State{auth_state: :req_pq} = state, packet) do
+    # decode res_pq#05162463
+    {:ok, res_pq} = TL.MTProto.decode(packet)
+    <<pq_int :: big-unsigned-integer-size(64)>> = res_pq.pq
+    [p, q] = Math.factorize(pq_int)
+
+    # make new_nonce
+    new_nonce = Crypto.make_nonce(32)
+
+    # make p_q_inner_data#83c95aec
+    p_q_inner_data = TL.MTProto.encode(%TL.MTProto.P.Q.Inner.Data{
+      pq: res_pq.pq, p: <<p :: 32>>, q: <<q :: 32>>, nonce: res_pq.nonce,
+      server_nonce: res_pq.server_nonce, new_nonce: new_nonce})
+
+    [public_key_fingerprint|_] = res_pq.server_public_key_fingerprints
+
+    encrypted_data = Crypto.p_q_inner_data_rsa(p_q_inner_data)
+
+    # make req_dh_params#d712e4be
+    req_dh_params = TL.MTProto.encode(%TL.MTProto.Req.DH.Params{
+      nonce: res_pq.nonce, server_nonce: res_pq.server_nonce,
+      p: <<p :: 32>>, q: <<q :: 32>>, public_key_fingerprint: public_key_fingerprint,
+      encrypted_data: encrypted_data})
+
+    send_bare_packet(client, req_dh_params)
+
+    # update auth_params with new values
+    auth_params =
+      %{state.auth_params|server_nonce: res_pq.server_nonce,
+                          new_nonce: new_nonce}
+
+    {:ok, %State{state|auth_state: :req_dh_params, auth_params: auth_params}}
   end
+  def handle(client, %State{auth_state: :req_dh_params} = state, packet) do
+    # decode server_dh_params_fail#79cb045d or server_dh_params_ok#d0e8075c
+    case TL.MTProto.decode(packet) do
+      {:error, reason} ->
+        {:error, reason, state}
+      {:ok, %TL.MTProto.Server.DH.Params.Fail{}} ->
+        {:error, :server_dh_params_fail, state}
+      {:ok, %TL.MTProto.Server.DH.Params.Ok{encrypted_answer: encrypted_answer}} ->
+        # auth params
+        auth_params = state.auth_params
 
-  def res_pq(<<0x05162463 :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      rest :: binary>> = packet
+        # get tmp_aes_key, tmp_aes_iv and encoded server answer
+        decoded_server_dh_params = Crypto.server_dh_params_decode(
+          auth_params.new_nonce, auth_params.server_nonce,
+          encrypted_answer)
 
-    {<<pq_int :: big-unsigned-integer-size(64)>>, rest} = Str.decode(rest)
-    {server_public_key_fingerprints, rest} = Vec.decode_long(rest)
+        # decode server_dh_inner_data
+        {:ok, server_dh_inner_data} = TL.MTProto.decode(
+          decoded_server_dh_params.answer)
 
-    %{nonce: nonce, server_nonce: server_nonce, pq: pq_int,
-      server_public_key_fingerprints: server_public_key_fingerprints}
+        # generate b and g_b numbers
+        b = Math.make_b
+        g_b = Math.make_g_b(server_dh_inner_data.g, b, server_dh_inner_data.dh_prime)
+
+        # make auth_key, auth_key_hash
+        auth_key = Math.make_auth_key(server_dh_inner_data.g_a, b,
+          server_dh_inner_data.dh_prime)
+        auth_key_hash = Crypto.auth_key_hash(auth_key)
+
+        # make server_salt
+        server_salt = Crypto.make_server_salt(auth_params.new_nonce, auth_params.server_nonce)
+
+        # make nonce_hash1
+        nonce_hash1 = Crypto.make_nonce_hash1(auth_params.new_nonce, auth_key)
+
+        # decode client_dh_inner_data
+        # TODO retry_id
+        client_dh_inner_data = TL.MTProto.encode(%TL.MTProto.Client.DH.Inner.Data{
+          nonce: auth_params.nonce, server_nonce: auth_params.server_nonce,
+          retry_id: 0, g_b: g_b})
+
+        # encrypt client_dh_inner_data
+        encrypted_client_dh_inner_data = Crypto.client_dh_inner_data_encrypt(
+          decoded_server_dh_params.tmp_aes_key, decoded_server_dh_params.tmp_aes_iv,
+          client_dh_inner_data)
+
+        # make set_client_dh_params
+        set_client_dh_params = TL.MTProto.encode(%TL.MTProto.Set.Client.DH.Params{
+          nonce: auth_params.nonce, server_nonce: auth_params.server_nonce,
+          encrypted_data: encrypted_client_dh_inner_data})
+
+        send_bare_packet(client, set_client_dh_params)
+
+        # update auth_params
+        auth_params = %{auth_params|nonce_hash1: nonce_hash1}
+
+        {:ok, %State{state|auth_state: :dh_gen, auth_key: auth_key,
+                           auth_key_hash: auth_key_hash, server_salt: server_salt,
+                           auth_params: auth_params}}
+    end
   end
+  def handle(client, %State{auth_state: :dh_gen} = state, packet) do
+    case TL.MTProto.decode(packet) do
+      {:error, reason} ->
+        {:error, reason, state}
+      {:ok, %TL.MTProto.Dh.Gen.Fail{}} ->
+        {:error, :dh_gen_fail, state}
+      {:ok, %TL.MTProto.Dh.Gen.Retry{}} ->
+        {:error, :dh_gen_retry, state}
+      {:ok, %TL.MTProto.Dh.Gen.Ok{} = dh_gen} ->
+        # check nonce_hash1
+        if state.auth_params.nonce_hash1 == dh_gen.new_nonce_hash1 do
+          IO.puts " -- authorized"
+          IO.puts " --- auth_key      #{inspect state.auth_key, limit: 10240}"
+          IO.puts " --- auth_key_hash #{inspect state.auth_key_hash, limit: 10240}"
+          IO.puts " --- server_salt   #{inspect state.server_salt, limit: 10240}"
 
-  def factorize(n) do
-    Enum.sort(pollard(n))
-  end
+          send(client, :authorized)
 
-  def p_q_inner_data(pq, p, q, nonce, server_nonce, new_nonce) do
-    <<0x83c95aec :: little-size(32),
-      Str.encode(<<pq :: 64>>) :: binary,
-      Str.encode(<<p :: 32>>) :: binary,
-      Str.encode(<<q :: 32>>) :: binary,
-      nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      new_nonce :: binary-size(32)>>
-  end
-
-  def p_q_inner_data_sha1(p_q_inner_data) do
-    sha1(p_q_inner_data)
-  end
-
-  def p_q_inner_data_rsa(p_q_inner_data) do
-    hash = p_q_inner_data_sha1(p_q_inner_data)
-    data = data_with_hash_and_padding_255(p_q_inner_data, hash)
-
-    rsa_encrypt(data, server_public_key())
-  end
-
-  def req_dh_params(nonce, server_nonce, p, q, public_key_fingerprint, encrypted_data) do
-    <<0xd712e4be :: little-size(32),
-      nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      Str.encode(<<p :: 32>>) :: binary,
-      Str.encode(<<q :: 32>>) :: binary,
-      public_key_fingerprint :: little-integer-size(64),
-      Str.encode(encrypted_data) :: binary>>
-  end
-
-  # server_DH_params_fail
-  def server_dh_params(<<0x79cb045d :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      new_nonce_hash :: binary-size(16)>> = packet
-
-    %{status: :fail, nonce: nonce, server_nonce: server_nonce,
-      new_nonce_hash: new_nonce_hash}
-  end
-  # server_DH_params_ok
-  def server_dh_params(<<0xd0e8075c :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      encrypted_answer_str :: binary>> = packet
-
-    {encrypted_answer, _rest} = Str.decode(encrypted_answer_str)
-
-    %{status: :ok, nonce: nonce, server_nonce: server_nonce,
-      encrypted_answer: encrypted_answer}
-  end
-
-  def server_dh_params_decode(new_nonce, server_nonce, encrypted_answer) do
-    tmp_aes_key = make_tmp_aes_key(new_nonce, server_nonce)
-    tmp_aes_iv = make_tmp_aes_iv(new_nonce, server_nonce)
-    answer = decrypt_answer(tmp_aes_key, tmp_aes_iv, encrypted_answer)
-
-    %{tmp_aes_key: tmp_aes_key, tmp_aes_iv: tmp_aes_iv, answer: answer}
-  end
-
-  def server_dh_inner_data(<<0xb5890dba :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      g :: little-integer-size(32),
-      rest :: binary>> = packet
-
-    {dh_prime, rest} = Str.decode(rest)
-    {g_a, rest} = Str.decode(rest)
-
-    <<server_time :: little-integer-size(32),
-      padding :: binary>> = rest
-
-    %{nonce: nonce, server_nonce: server_nonce,
-      g: g, dh_prime: dh_prime, g_a: g_a,
-      server_time: server_time, _padding: padding}
-  end
-
-  def make_b do
-    :crypto.strong_rand_bytes(2048)
-  end
-
-  def make_g_b(g, b, dh_prime) do
-    mod_pow(g, b, dh_prime)
-  end
-
-  def client_dh_inner_data(nonce, server_nonce, retry_id, g_b) do
-    <<0x6643b654 :: little-size(32),
-      nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      retry_id :: little-integer-size(64),
-      Str.encode(g_b) :: binary>>
-  end
-
-  def client_dh_inner_data_encrypt(tmp_aes_key, tmp_aes_iv, data) do
-    data_with_hash = TL.Utils.padding(16, <<sha1(data) :: binary, data :: binary>>)
-
-    encrypt_aes_ige256(tmp_aes_key, tmp_aes_iv, data_with_hash)
-  end
-
-  def set_client_dh_params(nonce, server_nonce, encrypted_client_dh_inner_data) do
-    <<0xf5045f1f :: little-size(32),
-      nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      Str.encode(encrypted_client_dh_inner_data) :: binary>>
-  end
-
-  def make_auth_key(g_a, b, dh_prime) do
-    mod_pow(g_a, b, dh_prime)
-  end
-
-  def auth_key_hash(auth_key) do
-    :binary.part(sha1(auth_key), 12, 8)
-  end
-
-  def make_nonce_hash1(new_nonce, auth_key) do
-    auth_key_hash = :binary.part(sha1(auth_key), 0, 8)
-    nonce =
-      <<new_nonce :: binary-size(32), 1 :: size(8),
-        auth_key_hash :: binary-size(8)>>
-
-    :binary.part(sha1(nonce), 4, 16)
-  end
-
-  def make_server_salt(new_nonce, server_nonce) do
-    server_salt = :binary.part(new_nonce, 0, 8)
-    binary_bxor(server_salt, :binary.part(server_nonce, 0, 8))
-  end
-
-  # dh_gen_ok
-  def dh_gen(<<0x3bcbf734 :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      new_nonce_hash1 :: binary-size(16)>> = packet
-
-    %{status: :ok, nonce: nonce, server_nonce: server_nonce,
-      new_nonce_hash1: new_nonce_hash1}
-  end
-  # dh_gen_retry
-  def dh_gen(<<0x46dc1fb9 :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      new_nonce_hash2 :: binary-size(16)>> = packet
-
-    %{status: :retry, nonce: nonce, server_nonce: server_nonce,
-      new_nonce_hash2: new_nonce_hash2}
-  end
-  # dh_gen_fail
-  def dh_gen(<<0xa69dae02 :: little-size(32), packet :: binary>>) do
-    <<nonce :: binary-size(16),
-      server_nonce :: binary-size(16),
-      new_nonce_hash3 :: binary-size(16)>> = packet
-
-    %{status: :fail, nonce: nonce, server_nonce: server_nonce,
-      new_nonce_hash3: new_nonce_hash3}
-  end
-
-  ### Pollard implementation
-
-  defp gcd(a,0), do: abs(a)
-  defp gcd(a,b), do: gcd(b, rem(a,b))
-
-  defp pollard(n) do
-    pollard(n, :rand.uniform(n - 2), 1, 0, 2, 1)
-  end
-  defp pollard(n, x, y, i, stage, factor) when factor != 1 do
-    [factor, div(n, factor)]
-  end
-  defp pollard(n, x, y, i, stage, factor) do
-    {y, stage} =
-      if i == stage do
-        {x, stage * 2}
-      else
-        {y, stage}
-      end
-    x = rem((x*x - 1), n)
-    i = i + 1
-    factor = gcd(n, abs(x - y))
-    pollard(n, x, y, i, stage, factor)
-  end
-
-  ### internal functions
-
-  defp rsa_encrypt(data, {:RSAPublicKey, n, e} = key) do
-    mod_pow(data, e, n)
-  end
-
-  defp mod_pow(a, b, c) do
-    :crypto.mod_pow(a, b, c)
-  end
-
-  defp data_with_hash_and_padding_255(data, hash) do
-    data_with_hash = <<hash :: binary-size(20), data :: binary>>
-    padding = (255 - byte_size(data_with_hash))
-
-    <<data_with_hash :: binary,
-      :crypto.strong_rand_bytes(padding) :: binary>>
-  end
-
-  defp sha1(data) do
-    :crypto.hash(:sha, data)
-  end
-
-  # tmp_aes_key := SHA1(new_nonce + server_nonce) + substr(SHA1(server_nonce + new_nonce), 0, 12);
-  defp make_tmp_aes_key(new_nonce, server_nonce) do
-    a = sha1(<<new_nonce :: binary, server_nonce :: binary>>)
-    b = :binary.part(sha1(<<server_nonce :: binary, new_nonce :: binary>>), 0, 12)
-
-    <<a :: binary, b :: binary>>
-  end
-
-  # tmp_aes_iv := substr(SHA1(server_nonce + new_nonce), 12, 8) +
-  #               SHA1(new_nonce + new_nonce) + substr(new_nonce, 0, 4);
-  defp make_tmp_aes_iv(new_nonce, server_nonce) do
-    a = :binary.part(sha1(<<server_nonce :: binary, new_nonce :: binary>>), 12, 8)
-    b = sha1(<<new_nonce :: binary, new_nonce :: binary>>)
-    c = :binary.part(new_nonce, 0, 4)
-
-    <<a :: binary, b :: binary, c :: binary>>
-  end
-
-  defp decrypt_answer(tmp_aes_key, tmp_aes_iv, encrypted_answer) do
-    answer_with_hash = decrypt_aes_ige256(tmp_aes_key, tmp_aes_iv, encrypted_answer)
-    <<hash :: binary-size(20), answer_with_padding :: binary>> = answer_with_hash
-    answer_with_padding
-  end
-
-  defp decrypt_aes_ige256(tmp_aes_key, tmp_aes_iv, encrypted) do
-    :crypto.block_decrypt(:aes_ige256, tmp_aes_key, tmp_aes_iv, encrypted)
-  end
-
-  defp encrypt_aes_ige256(tmp_aes_key, tmp_aes_iv, plain) do
-    :crypto.block_encrypt(:aes_ige256, tmp_aes_key, tmp_aes_iv, plain)
-  end
-
-  defp server_public_key do
-    priv = :code.priv_dir(:mtproto)
-
-    with {:ok, key} <- File.read("#{priv}/server_public.key"),
-         [entry|_] <- :public_key.pem_decode(key),
-         public_key <- :public_key.pem_entry_decode(entry)
-    do
-      public_key
-    else
-      {:error, reason} -> {:error, reason}
+          {:ok, %State{state|auth_state: :encrypted, auth_params: nil}}
+        else
+          {:error, :mismatched_nonce_hash1, state}
+        end
     end
   end
 
-  defp binary_bxor(bin1, bin2) do
-    size1 = bit_size(bin1)
-    size2 = bit_size(bin2)
+  ###
 
-    <<int1 :: size(size1)>> = bin1
-    <<int2 :: size(size2)>> = bin2
-
-    int3 = bxor(int1, int2)
-    size3 = max(size1, size2)
-
-    <<int3 :: size(size3)>>
+  def send_bare_packet(client, packet) do
+    send(client, {:send_bare, Packet.encode_bare(packet, Math.make_message_id_time())})
   end
 end
