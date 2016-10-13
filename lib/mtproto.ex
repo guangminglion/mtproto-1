@@ -5,8 +5,8 @@ defmodule MTProto do
 
   alias MTProto.{Auth, Crypto, Packet}
 
-  def start_link(notifier_pid) do
-    Connection.start_link(__MODULE__, [notifier: notifier_pid])
+  def start_link(opts) do
+    Connection.start_link(__MODULE__, opts)
   end
 
   def notifier_process(client, notifier_pid) do
@@ -70,12 +70,16 @@ defmodule MTProto do
   end
 
   def init(opts) do
+    notifier = opts[:notifier]
+    session_id = Keyword.get(opts, :session_id, Crypto.make_session_id)
+    msg_seqno = Keyword.get(opts, :msg_seqno, 0)
+
     {:connect, :init,
       %State{notifier: opts[:notifier], packet_buffer: <<>>,
-             msg_seqno: 0, msg_ids: []}}
+             session_id: session_id, msg_seqno: msg_seqno, msg_ids: []}}
   end
 
-  def connect(_, %{socket: nil,} = state) do
+  def connect(_, %{socket: nil} = state) do
     {host, port} = choose_server(state)
     Logger.debug("connect to #{inspect host}, #{inspect port}")
 
@@ -83,9 +87,8 @@ defmodule MTProto do
       {:ok, socket} ->
         Logger.debug("connected")
         send(self, :after_connect)
-        send(state.notifier, :connected)
-        session_id = Crypto.make_session_id()
-        {:ok, %{state|socket: socket, session_id: session_id, auth_state: :connected}}
+        send_to_notifier(state, :connected)
+        {:ok, %{state|socket: socket, auth_state: :connected}}
       {:error, _} ->
         {:backoff, 1000, state}
     end
@@ -95,7 +98,7 @@ defmodule MTProto do
     Logger.debug("disconnected #{inspect info}")
     :ok = :gen_tcp.close(socket)
     :error_logger.format("Connection error: ~p~n", [info])
-    {:connect, :reconnect, %{state | socket: nil}}
+    {:connect, :reconnect, %{state|socket: nil}}
   end
 
   def handle_call(:dump_state, _, state) do
@@ -216,9 +219,16 @@ defmodule MTProto do
       %TL.MTProto.Msgs.Ack{msg_ids: msg_ids} ->
         %{state|msg_ids: state.msg_ids -- msg_ids}
       %TL.MTProto.New.Session.Created{server_salt: server_salt} ->
-        %{state|server_salt: <<server_salt :: little-size(64)>>}
+        # convert to binary
+        server_salt = <<server_salt :: little-size(64)>>
+        # notify about authorization result, because this packet means
+        # that connection is initialized after authorization
+        send_to_notifier(state,
+          {:authorized, state.auth_key, state.auth_key_hash, server_salt})
+        # update state
+        %{state|server_salt: server_salt}
       %TL.MTProto.Rpc.Error{error_code: code, error_message: message} ->
-        send(state.notifier, {:error, code, message})
+        send_to_notifier(state, {:error, code, message})
         # TODO do we need to reconnect when server responds with error?
         # send(self, {:reconnect, :change_dc})
         state
@@ -226,17 +236,24 @@ defmodule MTProto do
         state = handle_packet(state, result)
         # FIXME do we need to remove msg_id from current state in this place?
         %{state|msg_ids: state.msg_ids -- [msg_id]}
+      %TL.MTProto.Bad.Server.Salt{new_server_salt: server_salt} ->
+        # convert to binary
+        server_salt = <<server_salt :: little-size(64)>>
+        send(self, {:reconnect, :server_salt_changed})
+        send_to_notifier(state, {:config, :server_salt, server_salt})
+        %{state|server_salt: server_salt}
       %TL.MTProto.Gzip.Packed{packed_data: packed_data} ->
         {:ok, data} = TL.Serializer.decode(:zlib.gunzip(packed_data))
         handle_packet(state, data)
       # stores this_dc and dc list, changes when server fails
       # or returns Rpc.Error, or accidentally disconnected
-      %TL.Config{dc_options: dc_options, this_dc: dc} ->
-        Logger.debug("set dc options, current: #{inspect dc}, list: #{inspect dc_options}")
+      %TL.Config{dc_options: dc_options, this_dc: dc} = config ->
+        # notify config
+        send_to_notifier(state, {:config, :server_config, config})
         %{state|dc_options: dc_options, dc: dc}
       result ->
         # IO.puts " --- handle_packet result: #{inspect result}"
-        send(state.notifier, {:result, result})
+        send_to_notifier(state, {:result, result})
         state
     end
   end
@@ -263,8 +280,14 @@ defmodule MTProto do
         query: %TL.Help.GetConfig{}}}
   end
 
-  def send_rpc_request(socket, request, state) do
+  defp send_to_notifier(state, message) do
+    send(state.notifier, {:tl, message})
+  end
+
+  defp send_rpc_request(socket, request, state) do
     {packet, state} = Packet.encode(request, state)
+
+    send_to_notifier(state, {:msg_seqno, state.msg_seqno})
 
     case :gen_tcp.send(socket, packet) do
       :ok ->
