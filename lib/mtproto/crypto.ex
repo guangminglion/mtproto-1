@@ -72,23 +72,41 @@ defmodule MTProto.Crypto do
     encrypt_aes_ige256(tmp_aes_key, tmp_aes_iv, data_with_hash)
   end
 
+  @doc """
+  auth_key_hash is computed := 64 lower-order bits of SHA1(auth_key).
+
+  The server checks whether there already is another key with the same
+  `auth_key_hash` and responds in one of the following ways.
+  """
   def auth_key_hash(auth_key) do
-    sha = sha1(auth_key)
-    :binary.part(sha, {byte_size(sha), -8})
+    substr(sha1(auth_key), 12, 8)
   end
 
+  @doc """
+  `new_nonce_hash1`, `new_nonce_hash2`, and `new_nonce_hash3` are obtained
+  as the 128 lower-order bits of SHA1 of the byte string derived from the
+  new_nonce string by adding a single byte with the value of 1, 2, or 3,
+  and followed by another 8 bytes with auth_key_aux_hash.
+
+  Different values are required to prevent an intruder from changing server
+  response `dh_gen_ok` into `dh_gen_retry`.
+  """
   def make_nonce_hash1(new_nonce, auth_key) do
-    auth_key_hash = :binary.part(sha1(auth_key), 0, 8)
+    auth_key_hash = substr(sha1(auth_key), 0, 8)
     nonce =
       <<new_nonce :: binary-size(32), 1 :: size(8),
         auth_key_hash :: binary-size(8)>>
 
-    :binary.part(sha1(nonce), 4, 16)
+    substr(sha1(nonce), 4, 16)
   end
 
+  @doc """
+  server_salt := substr(new_nonce, 0, 8) XOR substr(server_nonce, 0, 8)
+
+  https://core.telegram.org/mtproto/auth_key#dh-key-exchange-complete (9)
+  """
   def make_server_salt(new_nonce, server_nonce) do
-    server_salt = :binary.part(new_nonce, 0, 8)
-    Math.binary_bxor(server_salt, :binary.part(server_nonce, 0, 8))
+    Math.binary_bxor(substr(new_nonce, 0, 8), substr(server_nonce, 0, 8))
   end
 
   ### internal functions
