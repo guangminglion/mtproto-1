@@ -3,8 +3,6 @@ defmodule MTProto.Packet do
   Module for dealing with packets - encode, decode, ecnrypt, decrypt.
   """
 
-  require Logger
-
   alias TL.{Utils, Serializer}
   alias MTProto.{Crypto, Math}
 
@@ -102,8 +100,6 @@ defmodule MTProto.Packet do
       packet_size :: little-size(32),
       packet :: binary-size(packet_size),
       _rest :: binary>> = decrypted_packet
-
-    Logger.debug("packet to decode in TL: #{inspect packet, limit: 1_000_000}")
 
     Serializer.decode(packet)
   end
