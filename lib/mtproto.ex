@@ -97,7 +97,6 @@ defmodule MTProto do
   def disconnect(info, %{socket: socket} = state) do
     Logger.debug("disconnected #{inspect info}")
     :ok = :gen_tcp.close(socket)
-    :error_logger.format("Connection error: ~p~n", [info])
     {:connect, :reconnect, %{state|socket: nil}}
   end
 
@@ -210,7 +209,6 @@ defmodule MTProto do
     IO.puts "\n\n ---- handle_packet #{inspect packet, limit: 100_000}\n"
     case packet do
       %TL.MTProto.Msg.Container{messages: messages} ->
-        # calls `handle_packet#(state, %TL.MTProto.Message{...})` on each message
         Enum.reduce(messages, state, fn(message, state) ->
           handle_packet(state, message)
         end)

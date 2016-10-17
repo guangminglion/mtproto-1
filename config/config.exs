@@ -1,6 +1,5 @@
 use Mix.Config
 
-# TODO
 config :mtproto,
   host: {149,154,167,50},
   port: 443,

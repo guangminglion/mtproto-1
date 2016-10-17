@@ -11,8 +11,7 @@ defmodule MTProto.Auth do
     # make req_pq#60469778
     req_pq = TL.MTProto.encode(%TL.MTProto.Req.Pq{nonce: nonce})
 
-    # make auth
-    # :ok = :gen_tcp.send(socket, Packet.encode_bare(req_pq, Math.make_message_id()))
+    # send req_pq
     send_bare_packet(client, req_pq)
 
     # create auth_params
@@ -131,13 +130,7 @@ defmodule MTProto.Auth do
       {:ok, %TL.MTProto.Dh.Gen.Ok{} = dh_gen} ->
         # check nonce_hash1
         if state.auth_params.nonce_hash1 == dh_gen.new_nonce_hash1 do
-          IO.puts " -- authorized"
-          IO.puts " --- auth_key      #{inspect state.auth_key, limit: 10240}"
-          IO.puts " --- auth_key_hash #{inspect state.auth_key_hash, limit: 10240}"
-          IO.puts " --- server_salt   #{inspect state.server_salt, limit: 10240}"
-
           send(client, :authorized)
-
           {:ok, %State{state|auth_state: :encrypted, auth_params: nil}}
         else
           {:error, :mismatched_nonce_hash1, state}
