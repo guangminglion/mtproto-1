@@ -20,6 +20,10 @@ defmodule MTProto.MathTest do
     assert 2048 == bit_size(Math.make_b)
   end
 
+  test "#make_a" do
+    assert 2048 == bit_size(Math.make_a)
+  end
+
   test "#make_g_b" do
     g = 2
     {:ok, b_bytes} = Base.decode16(

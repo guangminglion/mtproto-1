@@ -20,6 +20,15 @@ defmodule MTProto.Math do
   end
 
   @doc """
+  Computes random 2048-bit number a (using a sufficient amount of entropy)
+
+  https://core.telegram.org/api/end-to-end#sending-a-request
+  """
+  def make_a do
+    :crypto.strong_rand_bytes(256)
+  end
+
+  @doc """
   g_b := pow(g, b) mod dh_prime;
 
   https://core.telegram.org/mtproto/auth_key#presenting-proof-of-work-server-authentication (6)
