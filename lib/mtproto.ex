@@ -25,10 +25,6 @@ defmodule MTProto do
     Connection.call(client, {:send, request})
   end
 
-  def dump_state(client) do
-    Connection.call(client, :dump_state)
-  end
-
   def close(client) do
     Connection.call(client, :close)
   end
@@ -115,9 +111,6 @@ defmodule MTProto do
     {:connect, :reconnect, %{state|socket: nil}}
   end
 
-  def handle_call(:dump_state, _, state) do
-    {:reply, state, state}
-  end
   def handle_call(:authorize, _, state) do
     # init MTProto authorization
     state = Auth.init(self(), state)
