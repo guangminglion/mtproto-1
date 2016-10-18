@@ -3,7 +3,7 @@ defmodule MTProto do
 
   require Logger
 
-  alias MTProto.{Auth, Crypto, Packet}
+  alias MTProto.{Auth, Crypto, DC, Packet}
 
   def start_link(opts) do
     Connection.start_link(__MODULE__, opts)
@@ -27,6 +27,10 @@ defmodule MTProto do
 
   def dump_state(client) do
     Connection.call(client, :dump_state)
+  end
+
+  def close(client) do
+    Connection.call(client, :close)
   end
 
   # ...
@@ -54,7 +58,8 @@ defmodule MTProto do
     :msg_seqno - used for storing message sequence number, for using in MTProto packets;
     :msg_ids - list of message IDs, using for server acks;
     :dc_options - list of telegram datacenters;
-    :dc - current datacenter ID.
+    :dc - current datacenter ID;
+    :reconnect - reconnect state, see MTProto.DC for details.
     """
     defstruct [:notifier, :socket,
                :packet_buffer,
@@ -62,7 +67,8 @@ defmodule MTProto do
                :auth_state, :auth_params,
                :auth_key, :auth_key_hash, :server_salt,
                :msg_seqno, :msg_ids,
-               :dc_options, :dc]
+               :dc_options, :dc,
+               :reconnect]
   end
 
   defmodule AuthParams do
@@ -87,13 +93,22 @@ defmodule MTProto do
       {:ok, socket} ->
         Logger.debug("connected")
         send(self, :after_connect)
-        send_to_notifier(state, :connected)
+        send_to_notifier(state, {:connected, host, port})
         {:ok, %{state|socket: socket, auth_state: :connected}}
       {:error, _} ->
         {:backoff, 1000, state}
     end
   end
 
+  def disconnect({:close, _from}, %{socket: socket} = state) do
+    :ok = :gen_tcp.close(socket)
+    {:stop, :normal, state}
+  end
+  def disconnect({:reconnect, reason}, %{socket: socket} = state) do
+    Logger.debug("need to reconnect #{inspect reason}")
+    :ok = :gen_tcp.close(socket)
+    {:connect, :reconnect, %{state|socket: nil}}
+  end
   def disconnect(info, %{socket: socket} = state) do
     Logger.debug("disconnected #{inspect info}")
     :ok = :gen_tcp.close(socket)
@@ -146,17 +161,28 @@ defmodule MTProto do
 
     Logger.debug("connection ok!")
 
-    {:noreply, state}
+    # TODO migrate to another DC
+    # if we tried to reconnect
+    # state =
+    #   case state.reconnect do
+    #     {:dc, dc_id} ->
+    #       # auth_key used from %TL.Auth.ExportedAuthorization{id: user_id, bytes: auth_key}
+    #       %TL.Auth.ImportAuthorization{id: user_id, bytes: auth_key}
+    #     _ ->
+    #       state
+    #   end
+
+    {:noreply, %{state|reconnect: nil}}
+  end
+  def handle_info({:reconnect, {:change_dc, dc_id} = reason}, state) do
+    Logger.debug("migrate to DC##{dc_id}")
+    {:disconnect, {:reconnect, reason}, %{state|reconnect: {:dc, dc_id}}}
   end
   def handle_info({:reconnect, reason}, state) do
     Logger.debug("reconnect #{inspect reason}")
-    {:disconnect, {:reconnect, reason}, state}
+    {:disconnect, {:reconnect, reason}, %{state|reconnect: :random}}
   end
   def handle_info(:authorized, %{socket: socket} = state) do
-    # notify about authorization result
-    send(state.notifier,
-      {:authorized, state.auth_key, state.auth_key_hash, state.server_salt})
-
     # init connection
     case send_rpc_request(socket, init_connection_request(), state) do
       {:ok, state} -> {:noreply, state}
@@ -206,14 +232,15 @@ defmodule MTProto do
   end
 
   defp handle_packet(state, packet) do
-    IO.puts "\n\n ---- handle_packet #{inspect packet, limit: 100_000}\n"
+    Logger.debug "handle_packet #{inspect packet, limit: 100_000}"
     case packet do
       %TL.MTProto.Msg.Container{messages: messages} ->
         Enum.reduce(messages, state, fn(message, state) ->
           handle_packet(state, message)
         end)
-      %TL.MTProto.Message{msg_id: msg_id, body: body} ->
-        handle_packet(state, body)
+      %TL.MTProto.Message{seqno: seqno, msg_id: msg_id, body: body} ->
+        state = handle_packet(state, body)
+        %{state|msg_seqno: state.msg_seqno + 2}
       %TL.MTProto.Msgs.Ack{msg_ids: msg_ids} ->
         %{state|msg_ids: state.msg_ids -- msg_ids}
       %TL.MTProto.New.Session.Created{server_salt: server_salt} ->
@@ -225,6 +252,12 @@ defmodule MTProto do
           {:authorized, state.auth_key, state.auth_key_hash, server_salt})
         # update state
         %{state|server_salt: server_salt}
+      # TODO migrate to another DC
+      # %TL.MTProto.Rpc.Error{error_code: 303, error_message: <<"NETWORK_MIGRATE_", dc_id :: binary>>} ->
+      #   %TL.Auth.ExportAuthorization{dc_id: dc_id}
+      #   dc_id = String.to_integer(dc_id)
+      #   send(self, {:reconnect, {:change_dc, dc_id}})
+      #   state
       %TL.MTProto.Rpc.Error{error_code: code, error_message: message} ->
         send_to_notifier(state, {:error, code, message})
         # TODO do we need to reconnect when server responds with error?
@@ -237,9 +270,14 @@ defmodule MTProto do
       %TL.MTProto.Bad.Server.Salt{new_server_salt: server_salt} ->
         # convert to binary
         server_salt = <<server_salt :: little-size(64)>>
+        # reconnect to use new server_salt
         send(self, {:reconnect, :server_salt_changed})
+        # notify handler
         send_to_notifier(state, {:config, :server_salt, server_salt})
         %{state|server_salt: server_salt}
+      %TL.MTProto.Bad.Msg.Notification{error_code: code} ->
+        send_to_notifier(state, {:error, code, "bad_msg_id"})
+        state
       %TL.MTProto.Gzip.Packed{packed_data: packed_data} ->
         {:ok, data} = TL.Serializer.decode(:zlib.gunzip(packed_data))
         handle_packet(state, data)
@@ -299,25 +337,8 @@ defmodule MTProto do
     :ok = :inet.setopts(socket, active: :once)
   end
 
-  defp choose_server(%{dc: dc, dc_options: dc_options} = state) when length(dc_options) > 0 do
-    acceptable_dcs = Enum.filter(dc_options, fn(dc_opt) ->
-        dc_opt.ipv6 == false and dc_opt.id != dc
-      end)
-
-    new_dc = Enum.random(acceptable_dcs)
-
-    {String.to_charlist(new_dc.ip_address), new_dc.port}
-  end
-  defp choose_server(_state) do
-    {telegram_host(), telegram_port()}
-  end
-
-  defp telegram_host do
-    config(:host)
-  end
-
-  defp telegram_port do
-    config(:port)
+  defp choose_server(state) do
+    DC.choose(state.reconnect, state.dc, state.dc_options)
   end
 
   defp config(key, default \\ nil) do
