@@ -1,4 +1,4 @@
-### [MTProto](https://core.telegram.org/mtproto) transport for Elixir [![Hex.pm](https://img.shields.io/hexpm/v/mtproto.svg)](https://hex.pm/packages/mtproto) [![Travis](https://img.shields.io/travis/ccsteam/mtproto.svg)](https://travis-ci.org/ccsteam/mtproto)
+### [MTProto](https://core.telegram.org/mtproto) transport for Elixir [![Hex.pm](https://img.shields.io/hexpm/v/mtproto.svg)](https://hex.pm/packages/mtproto) [![Travis](https://img.shields.io/travis/ccsteam/mtproto.svg)](https://travis-ci.org/ccsteam/mtproto) [![Coverage Status](https://coveralls.io/repos/github/ccsteam/mtproto/badge.svg?branch=master)](https://coveralls.io/github/ccsteam/mtproto?branch=master)
 
 ---
 
