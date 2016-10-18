@@ -16,7 +16,9 @@ defmodule MTProto.MathTest do
     assert [p, q] == Math.factorize(pq)
   end
 
-  test "#make_b"
+  test "#make_b" do
+    assert 2048 == bit_size(Math.make_b)
+  end
 
   test "#make_g_b" do
     g = 2

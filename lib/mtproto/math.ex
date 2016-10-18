@@ -16,7 +16,7 @@ defmodule MTProto.Math do
   https://core.telegram.org/mtproto/auth_key#presenting-proof-of-work-server-authentication (6)
   """
   def make_b do
-    :crypto.strong_rand_bytes(2048)
+    :crypto.strong_rand_bytes(256)
   end
 
   @doc """
