@@ -109,22 +109,22 @@ defmodule MTProto.Crypto do
     Math.binary_bxor(substr(new_nonce, 0, 8), substr(server_nonce, 0, 8))
   end
 
+  def sha1(data) do
+    :crypto.hash(:sha, data)
+  end
+
+  def encrypt_aes_ige256(aes_key, aes_iv, plain) do
+    :crypto.block_encrypt(:aes_ige256, aes_key, aes_iv, plain)
+  end
+
+  def decrypt_aes_ige256(aes_key, aes_iv, encrypted) do
+    :crypto.block_decrypt(:aes_ige256, aes_key, aes_iv, encrypted)
+  end
+
   ### internal functions
 
   defp action_value(:decode), do: 8
   defp action_value(:encode), do: 0
-
-  defp sha1(data) do
-    :crypto.hash(:sha, data)
-  end
-
-  defp encrypt_aes_ige256(aes_key, aes_iv, plain) do
-    :crypto.block_encrypt(:aes_ige256, aes_key, aes_iv, plain)
-  end
-
-  defp decrypt_aes_ige256(aes_key, aes_iv, encrypted) do
-    :crypto.block_decrypt(:aes_ige256, aes_key, aes_iv, encrypted)
-  end
 
   defp substr(bin, start, length) do
     :binary.part(bin, start, length)
