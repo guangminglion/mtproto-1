@@ -115,6 +115,7 @@ defmodule MTProto.MathTest do
     id2 = Math.make_message_id
 
     assert id1 != id2
+    assert 0 == rem(id1, 4)
   end
 
   test "#binary_bxor" do
