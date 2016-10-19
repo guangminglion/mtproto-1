@@ -77,7 +77,7 @@ defmodule MTProto do
     msg_seqno = Keyword.get(opts, :msg_seqno, 0)
 
     {:connect, :init,
-      %State{notifier: opts[:notifier], packet_buffer: <<>>,
+      %State{auth_state: :connected, notifier: opts[:notifier], packet_buffer: <<>>,
              session_id: session_id, msg_seqno: msg_seqno, msg_ids: []}}
   end
 
@@ -87,10 +87,9 @@ defmodule MTProto do
 
     case :gen_tcp.connect(host, port, [:binary, active: false], 5000) do
       {:ok, socket} ->
-        Logger.debug("connected")
         send(self, :after_connect)
         send_to_notifier(state, {:connected, host, port})
-        {:ok, %{state|socket: socket, auth_state: :connected}}
+        {:ok, %{state|socket: socket}}
       {:error, _} ->
         {:backoff, 1000, state}
     end
@@ -165,6 +164,10 @@ defmodule MTProto do
     #       state
     #   end
 
+    if state.auth_key && state.auth_key_hash && state.server_salt do
+      send(self, :authorized)
+    end
+
     {:noreply, %{state|reconnect: nil}}
   end
   def handle_info({:reconnect, {:change_dc, dc_id} = reason}, state) do
@@ -197,11 +200,8 @@ defmodule MTProto do
         {:noreply, %{state|packet_buffer: incomplete_packet}}
       {:ok, packet, rest} ->
         state = %{state|packet_buffer: rest}
-
-        # IO.puts " |-| packet:  #{inspect packet, limit: 50_000}"
         decode_result = Packet.decode_packet(packet, state)
 
-        # IO.puts " |-| decoded: #{inspect decode_result}"
         case decode_result do
           {:error, reason} ->
             {:stop, {:error, reason}, state}
@@ -222,6 +222,10 @@ defmodule MTProto do
   end
   def handle_info(_request, state) do
     {:noreply, state}
+  end
+
+  def terminate(_reason, state) do
+    :gen_tcp.close(state.socket)
   end
 
   defp handle_packet(state, packet) do
