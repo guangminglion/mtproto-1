@@ -1,4 +1,4 @@
-### [MTProto](https://core.telegram.org/mtproto) transport for Elixir [![Hex.pm](https://img.shields.io/hexpm/v/mtproto.svg)](https://hex.pm/packages/mtproto) [![Travis](https://img.shields.io/travis/ccsteam/mtproto.svg)](https://travis-ci.org/ccsteam/mtproto) [![Coverage Status](https://coveralls.io/repos/github/ccsteam/mtproto/badge.svg?branch=master)](https://coveralls.io/github/ccsteam/mtproto?branch=master)
+### [MTProto](https://core.telegram.org/mtproto) transport for Elixir [![Hex.pm](https://img.shields.io/hexpm/v/mtproto.svg)](https://hex.pm/packages/mtproto) [![Travis](https://img.shields.io/travis/ccsteam/mtproto.svg)](https://travis-ci.org/ccsteam/mtproto) [![Coverage Status](https://img.shields.io/coveralls/ccsteam/mtproto.svg)](https://coveralls.io/github/ccsteam/mtproto?branch=master)
 
 ---
 
@@ -8,7 +8,6 @@ MTProto (protocol) transport implementation in Elixir, acts like gen_tcp and oth
 
 ### TODO
 
-* Tests, more testing;
 * Add checks for numbers in DH algorithm;
 * Checks for salts and nonce hashes during authorization;
 * Data Center migration;
