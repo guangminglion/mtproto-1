@@ -3,7 +3,7 @@ defmodule MTProto do
 
   require Logger
 
-  alias MTProto.{Auth, Crypto, DC, Packet}
+  alias MTProto.{Auth, Crypto, DC, Packet, Response}
 
   def start_link(opts) do
     Connection.start_link(__MODULE__, opts)
@@ -62,7 +62,7 @@ defmodule MTProto do
                :session_id,
                :auth_state, :auth_params,
                :auth_key, :auth_key_hash, :server_salt,
-               :msg_seqno, :msg_ids,
+               :msg_seqno, :msg_ids, :msg_ids_to_ack,
                :dc_options, :dc,
                :reconnect]
   end
@@ -78,7 +78,7 @@ defmodule MTProto do
 
     {:connect, :init,
       %State{auth_state: :connected, notifier: opts[:notifier], packet_buffer: <<>>,
-             session_id: session_id, msg_seqno: msg_seqno, msg_ids: []}}
+             session_id: session_id, msg_seqno: msg_seqno, msg_ids: [], msg_ids_to_ack: []}}
   end
 
   def connect(_, %{socket: nil} = state) do
@@ -208,7 +208,7 @@ defmodule MTProto do
           {:ok, decoded_packet} ->
             case state.auth_state do
               :encrypted ->
-                state = handle_packet(state, decoded_packet)
+                state = Response.handle(state, decoded_packet)
                 next_packet(socket)
                 {:noreply, state}
               _ ->
@@ -225,70 +225,7 @@ defmodule MTProto do
   end
 
   def terminate(_reason, state) do
-    :gen_tcp.close(state.socket)
-  end
-
-  defp handle_packet(state, packet) do
-    Logger.debug "handle_packet #{inspect packet, limit: 100_000}"
-    case packet do
-      %TL.MTProto.Msg.Container{messages: messages} ->
-        Enum.reduce(messages, state, fn(message, state) ->
-          handle_packet(state, message)
-        end)
-      %TL.MTProto.Message{seqno: seqno, msg_id: msg_id, body: body} ->
-        state = handle_packet(state, body)
-        %{state|msg_seqno: state.msg_seqno + 2}
-      %TL.MTProto.Msgs.Ack{msg_ids: msg_ids} ->
-        %{state|msg_ids: state.msg_ids -- msg_ids}
-      %TL.MTProto.New.Session.Created{server_salt: server_salt} ->
-        # convert to binary
-        server_salt = <<server_salt :: little-size(64)>>
-        # notify about authorization result, because this packet means
-        # that connection is initialized after authorization
-        send_to_notifier(state,
-          {:authorized, state.auth_key, state.auth_key_hash, server_salt})
-        # update state
-        %{state|server_salt: server_salt}
-      # TODO migrate to another DC
-      # %TL.MTProto.Rpc.Error{error_code: 303, error_message: <<"NETWORK_MIGRATE_", dc_id :: binary>>} ->
-      #   %TL.Auth.ExportAuthorization{dc_id: dc_id}
-      #   dc_id = String.to_integer(dc_id)
-      #   send(self, {:reconnect, {:change_dc, dc_id}})
-      #   state
-      %TL.MTProto.Rpc.Error{error_code: code, error_message: message} ->
-        send_to_notifier(state, {:error, code, message})
-        # TODO do we need to reconnect when server responds with error?
-        # send(self, {:reconnect, :change_dc})
-        state
-      %TL.MTProto.Rpc.Result{req_msg_id: msg_id, result: result} ->
-        state = handle_packet(state, result)
-        # FIXME do we need to remove msg_id from current state in this place?
-        %{state|msg_ids: state.msg_ids -- [msg_id]}
-      %TL.MTProto.Bad.Server.Salt{new_server_salt: server_salt} ->
-        # convert to binary
-        server_salt = <<server_salt :: little-size(64)>>
-        # reconnect to use new server_salt
-        send(self, {:reconnect, :server_salt_changed})
-        # notify handler
-        send_to_notifier(state, {:config, :server_salt, server_salt})
-        %{state|server_salt: server_salt}
-      %TL.MTProto.Bad.Msg.Notification{error_code: code} ->
-        send_to_notifier(state, {:error, code, "bad_msg_id"})
-        state
-      %TL.MTProto.Gzip.Packed{packed_data: packed_data} ->
-        {:ok, data} = TL.Serializer.decode(:zlib.gunzip(packed_data))
-        handle_packet(state, data)
-      # stores this_dc and dc list, changes when server fails
-      # or returns Rpc.Error, or accidentally disconnected
-      %TL.Config{dc_options: dc_options, this_dc: dc} = config ->
-        # notify config
-        send_to_notifier(state, {:config, :server_config, config})
-        %{state|dc_options: dc_options, dc: dc}
-      result ->
-        # IO.puts " --- handle_packet result: #{inspect result}"
-        send_to_notifier(state, {:result, result})
-        state
-    end
+    # :gen_tcp.close(state.socket)
   end
 
   defp handle_auth(client, state, packet) do
