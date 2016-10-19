@@ -3,7 +3,7 @@ defmodule MTProto.ResponseTest do
 
   import MTProto.Factory
 
-  alias MTProto.{Crypto, Response}
+  alias MTProto.Response
 
   setup do
     {:ok, state: build(:encrypted_state)}
