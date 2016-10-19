@@ -1,6 +1,69 @@
 defmodule MTProto.Factory do
   use ExMachina
 
+  alias MTProto.Crypto
+
+  @auth_key File.read!("test/support/crypto_auth.key")
+
+  def state_factory do
+    %MTProto.State{
+      auth_state: :connected, notifier: self, packet_buffer: <<>>,
+      session_id: Crypto.make_session_id, msg_seqno: 0, msg_ids: []}
+  end
+
+  def encrypted_state_factory do
+    %MTProto.State{
+      auth_state: :encrypted, auth_key: @auth_key, auth_key_hash: Crypto.auth_key_hash(@auth_key),
+      server_salt: <<148, 211, 200, 232, 215, 235, 188, 204>>,
+      session_id: <<237, 3, 178, 105, 5, 99, 189, 59>>,
+      notifier: self, packet_buffer: <<>>, msg_seqno: 0, msg_ids: []}
+  end
+
+  def res_pq_factory do
+    # resPQ#05162463 nonce:int128 server_nonce:int128 pq:string server_public_key_fingerprints:Vector<long> = ResPQ;
+
+    %TL.MTProto.ResPQ{
+      nonce: Crypto.make_nonce(16),
+      server_nonce: Crypto.make_nonce(16),
+      pq: <<23, 237, 72, 148, 26, 8, 249, 129>>,
+      server_public_key_fingerprints: [0]}
+  end
+
+  def server_dh_params_ok_factory do
+    %TL.MTProto.Server.DH.Params.Ok{
+      nonce: Crypto.make_nonce(16),
+      server_nonce: Crypto.make_nonce(16),
+      encrypted_answer: <<>>}
+  end
+
+  def server_dh_params_fail_factory do
+    %TL.MTProto.Server.DH.Params.Fail{
+      nonce: Crypto.make_nonce(16),
+      server_nonce: Crypto.make_nonce(16),
+      new_nonce_hash: Crypto.make_nonce(16)}
+  end
+
+  def dh_gen_ok_factory do
+    %TL.MTProto.Dh.Gen.Ok{
+      nonce: Crypto.make_nonce(16),
+      server_nonce: Crypto.make_nonce(16),
+      new_nonce_hash1: Crypto.make_nonce(16)}
+  end
+
+  def dh_gen_retry_factory do
+    %TL.MTProto.Dh.Gen.Retry{
+      nonce: Crypto.make_nonce(16),
+      server_nonce: Crypto.make_nonce(16),
+      new_nonce_hash2: Crypto.make_nonce(16)}
+  end
+
+  def dh_gen_fail_factory do
+    %TL.MTProto.Dh.Gen.Fail{
+      nonce: Crypto.make_nonce(16),
+      server_nonce: Crypto.make_nonce(16),
+      new_nonce_hash3: Crypto.make_nonce(16)}
+  end
+
   def config_factory do
     %TL.Config{
       chat_big_size: 10, chat_size_max: 200, date: 1476812773,

@@ -98,8 +98,30 @@ defmodule MTProto.MathTest do
         == Math.make_auth_key(g_a_bytes, b_bytes, dh_prime_bytes)
   end
 
-  test "#make_message_id_time"
-  test "#make_message_id"
-  test "#binary_bxor"
-  test "#bor1"
+  test "#make_key works like #make_auth_key" do
+    assert Math.make_auth_key(42, 100, 3) == Math.make_key(42, 100, 3)
+  end
+
+  test "#make_message_id_time" do
+    id1 = Math.make_message_id_time
+    :timer.sleep(1)
+    id2 = Math.make_message_id_time
+
+    assert id1 != id2
+  end
+
+  test "#make_message_id" do
+    id1 = Math.make_message_id
+    id2 = Math.make_message_id
+
+    assert id1 != id2
+  end
+
+  test "#binary_bxor" do
+    assert <<3,3,3,3>> == Math.binary_bxor(<<1,1,1,1>>, <<2,2,2,2>>)
+  end
+
+  test "#bor1" do
+    assert 3 == Math.bor1(2)
+  end
 end

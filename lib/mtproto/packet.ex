@@ -9,8 +9,7 @@ defmodule MTProto.Packet do
   # TODO
   @doc """
   """
-  def encode(request, %{auth_state: :encrypted} = state) do
-    message_id = Math.make_message_id()
+  def encode(request, %{auth_state: :encrypted} = state, message_id \\ Math.make_message_id()) do
     packet = Serializer.encode(request)
     msg_seqno = if need_ack?(request) do
       Math.bor1(state.msg_seqno)

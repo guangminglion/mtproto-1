@@ -3,7 +3,25 @@ defmodule MTProto.CryptoTest do
   alias MTProto.Crypto
 
   describe "#encrypt_packet" do
-    test "encrypts packet"
+    setup do
+      auth_key = File.read!("test/support/crypto_auth.key")
+      auth_key_hash = Crypto.auth_key_hash(auth_key)
+
+      {:ok, auth_key: auth_key, auth_key_hash: auth_key_hash}
+    end
+
+    test "encrypts packet", %{auth_key: ak, auth_key_hash: akh} do
+      assert <<224, 228, 243, 169, 134, 100, 52, 190, 36, 82, 19, 70, 41, 241,
+               246, 210, 150, 236, 138, 239, 180, 228, 216, 169, 229, 219, 62,
+               192, 168, 83, 83, 200, 135, 29, 229, 183, 107, 163, 57, 27>>
+          == Crypto.encrypt_packet(<<1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16>>, ak, akh)
+    end
+
+    test "raise error when packet size not a multiple of 16", %{auth_key: ak, auth_key_hash: akh} do
+      assert_raise(ArgumentError, fn ->
+        Crypto.encrypt_packet(<<1>>, ak, akh)
+      end)
+    end
   end
 
   describe "#decrypt_packet" do
@@ -45,13 +63,50 @@ defmodule MTProto.CryptoTest do
         == Crypto.generate_aes(msg_key, auth_key, :encode)
   end
 
-  test "#make_session_id"
-  test "#make_nonce"
-  test "#p_q_inner_data_rsa"
+  describe "#make_session_id" do
+    test "size is 8 bytes" do
+      assert 8 == byte_size(Crypto.make_session_id)
+    end
+
+    test "randoms" do
+      s1 = Crypto.make_session_id
+      s2 = Crypto.make_session_id
+
+      assert s1 != s2
+    end
+  end
+
+  describe "#make_nonce" do
+    test "default size is 16 bytes" do
+      assert 16 == byte_size(Crypto.make_nonce)
+    end
+
+    test "with size" do
+      assert 32 == byte_size(Crypto.make_nonce(32))
+    end
+
+    test "randoms" do
+      n1 = Crypto.make_nonce
+      n2 = Crypto.make_nonce
+
+      assert n1 != n2
+    end
+  end
+
+  test "#p_q_inner_data_rsa" do
+    p_q_inner_data =
+      <<236, 90, 201, 131, 8, 26, 93, 125, 66, 150, 198, 182, 41, 0, 0, 0, 4, 79, 30,
+        238, 201, 0, 0, 0, 4, 85, 78, 92, 97, 0, 0, 0, 80, 86, 137, 183, 49, 176, 98,
+        102, 253, 153, 147, 246, 41, 202, 147, 224, 68, 227, 12, 225, 18, 248, 89, 93,
+        246, 180, 129, 111, 128, 199, 101, 143, 43, 148, 87, 120, 170, 152, 202, 22,
+        93, 139, 78, 18, 129, 169, 230, 14, 150, 229, 179, 33, 152, 248, 80, 124, 243,
+        52, 23, 46, 33, 189, 171, 178>>
+
+    assert 256 == byte_size(Crypto.p_q_inner_data_rsa(p_q_inner_data))
+  end
 
   test "#server_dh_params_decode" do
     {:ok, new_nonce_bytes} = Base.decode16("311C85DB234AA2640AFC4A76A735CF5B1F0FD68BD17FA181E1229AD867CC024D")
-    {:ok, nonce_bytes} = Base.decode16("3E0549828CCA27E966B301A48FECE2FC")
     {:ok, server_nonce_bytes} = Base.decode16("A5CF4D33F4A11EA877BA4AA573907330")
     {:ok, encrypted_answer_bytes} = Base.decode16(
       <<"28A92FE20173B347A8BB324B5FAB2667C9A8BBCE6468D5B509A4CBDDC186240AC912CF7006AF8926",
@@ -127,12 +182,12 @@ defmodule MTProto.CryptoTest do
         "3258DB1AA2CC7826D91334EFC1FDC665B67FE45ED0">>)
 
     encrypted_bytes_size = byte_size(encrypted_bytes) - 16
-    <<encrypted :: binary-size(encrypted_bytes_size),
-      encrypted_padding :: binary-size(16)>> = encrypted_bytes
+    <<_encrypted :: binary-size(encrypted_bytes_size),
+      _encrypted_padding :: binary-size(16)>> = encrypted_bytes
 
     encrypted_result = Crypto.client_dh_inner_data_encrypt(tmp_aes_key_bytes, tmp_aes_iv_bytes, client_dh_inner_data)
 
-    assert <<encrypted :: binary-size(encrypted_bytes_size), _padding :: binary>>
+    assert <<_encrypted :: binary-size(encrypted_bytes_size), _padding :: binary>>
          = encrypted_result
     assert 336 == byte_size(encrypted_result)
   end

@@ -53,7 +53,7 @@ defmodule MTProtoTest do
 
     test "sends first packet (0xef)" do
       with_mocks [tcp_mocks] do
-        c = start_client
+        start_client
 
         assert_receive {:tcp, <<0xef>>}
       end
@@ -218,6 +218,61 @@ defmodule MTProtoTest do
     end
   end
 
+  describe "#notifier_process" do
+    test "sets new notifier process" do
+      with_mocks [tcp_mocks] do
+        c = start_client
+
+        :ok = MTProto.notifier_process(c, :test_pid)
+
+        assert :test_pid == state(c, :notifier)
+      end
+    end
+  end
+
+  describe "#send_request" do
+    test "sends request to the server" do
+      with_mocks [tcp_mocks, packet_encode_mocks(<<42>>)] do
+        c = start_client
+        request = %TL.MTProto.Ping{ping_id: 1}
+
+        :ok = MTProto.send_request(c, request)
+
+        assert called Packet.encode(request, state(c))
+        assert called :gen_tcp.send(self, <<42>>)
+      end
+    end
+
+    test "error when sending request to the server fails" do
+      c =
+        with_mocks [tcp_mocks] do
+          c = start_client
+          assert_receive {:tl, {:connected, _, _}}
+          assert_receive {:tcp, <<0xef>>}
+
+          c
+        end
+
+      with_mocks [tcp_send_fail_mocks(:enoent), packet_encode_mocks(<<42>>)] do
+        Process.flag(:trap_exit, true)
+        catch_exit(MTProto.send_request(c, %TL.MTProto.Ping{ping_id: 1}))
+
+        assert_receive {:tl, {:connected, _, _}}
+      end
+    end
+  end
+
+  describe "#close" do
+    test "closes tcp connection" do
+      Process.flag(:trap_exit, true)
+
+      c = start_client
+      catch_exit(MTProto.close(c))
+
+      assert_receive {:EXIT, _, :normal}
+    end
+  end
+
   defp start_client(opts \\ []) do
     {:ok, client} = MTProto.start_link(Keyword.merge([notifier: self], opts))
 
@@ -268,14 +323,20 @@ defmodule MTProtoTest do
     {:gen_tcp, [:passthrough, :unstick],
       connect: fn(_host, _port, _opts, _timeout) -> {:ok, receiver} end,
       send: fn(_socket, packet) -> send(receiver, {:tcp, packet}); :ok end,
-      close: fn(socket) -> :ok end}
+      close: fn(_socket) -> :ok end}
   end
 
   defp tcp_connect_fail_mocks do
     {:gen_tcp, [:passthrough, :unstick],
       connect: fn(_host, _port, _opts, _timeout) -> {:error, :reason} end,
       send: fn(socket, packet) -> send(socket, {:tcp, packet}); :ok end,
-      close: fn(socket) -> :ok end}
+      close: fn(_socket) -> :ok end}
+  end
+
+  defp tcp_send_fail_mocks(reason) do
+    {:gen_tcp, [:passthrough, :unstick],
+      send: fn(_socket, _packet) -> {:error, reason} end,
+      close: fn(_socket) -> :ok end}
   end
 
   defp packet_decode_mocks do
@@ -287,6 +348,11 @@ defmodule MTProtoTest do
   defp packet_decode_packet_mocks(result) do
     {Packet, [:passthrough],
       decode_packet: fn(_packet, _state) -> result end}
+  end
+
+  defp packet_encode_mocks(result) do
+    {Packet, [:passthrough],
+      encode: fn(_request, state) -> {result, state} end}
   end
 
   defp dc_mocks(host \\ 'localhost', port \\ 439) do
