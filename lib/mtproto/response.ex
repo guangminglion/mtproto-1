@@ -31,7 +31,7 @@ defmodule MTProto.Response do
         state
       %TL.MTProto.Rpc.Result{req_msg_id: req_msg_id, result: result} ->
         state = handle(state, result)
-        %{state|msg_ids_to_ack: [req_msg_id|state.msg_ids_to_ack]}
+        %{state|msg_ids: state.msg_ids -- [req_msg_id]}
       %TL.MTProto.Bad.Server.Salt{new_server_salt: server_salt} ->
         # convert to binary
         server_salt = <<server_salt :: little-size(64)>>

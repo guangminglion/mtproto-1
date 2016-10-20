@@ -24,10 +24,23 @@ defmodule MTProto.PacketTest do
     end
 
     test "updates state with msg_seqno and msg_ids", %{state: state} do
-      {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 1}, state, 42)
+      {_packet, state} = Packet.encode(
+        %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}, state, 42)
 
       assert 2 == state.msg_seqno
       assert [42] == state.msg_ids
+    end
+
+    test "updates state with msg_seqno", %{state: state} do
+      {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 1}, state, 42)
+
+      assert 2 == state.msg_seqno
+    end
+
+    test "doesn't updates state with msg_ids when it's not need to ack", %{state: state} do
+      {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 1}, state, 42)
+
+      refute [42] == state.msg_ids
     end
   end
 
@@ -167,7 +180,33 @@ defmodule MTProto.PacketTest do
             status: %TL.UserStatusOffline{was_online: 1476183058},
             user_id: 30193135}}
 
-      assert {:ok, expected_struct} == Packet.decode_packet(packet, state)
+      assert {:ok, ^expected_struct, _} = Packet.decode_packet(packet, state)
+    end
+
+    test "returns state with msg_ids_to_ack in state if (seq_no & 1) == 1", %{state: state} do
+      packet =
+        <<224, 228, 243, 169, 134, 100, 52, 190, 179, 21, 141, 143, 80, 14, 6, 23, 108,
+          127, 159, 172, 39, 216, 64, 188, 217, 19, 77, 213, 239, 10, 99, 209, 196, 185,
+          110, 78, 70, 6, 54, 222, 117, 67, 250, 130, 241, 230, 26, 139, 135, 191, 7,
+          98, 41, 5, 177, 192, 81, 220, 33, 27, 108, 35, 178, 163, 205, 40, 107, 134,
+          159, 110, 165, 95, 135, 165, 210, 194, 88, 52, 186, 207, 151, 14, 72, 180, 78,
+          22, 239, 61>>
+      {:ok, _, new_state} = Packet.decode_packet(packet, state)
+
+      assert [6340157961025832961] == new_state.msg_ids_to_ack
+    end
+
+    test "returns old state if (seq_no & 1) != 1", %{state: state} do
+      packet =
+        <<224, 228, 243, 169, 134, 100, 52, 190, 179, 21, 141, 143, 80, 14, 6, 23, 108,
+          127, 159, 172, 39, 216, 64, 188, 217, 19, 77, 213, 239, 10, 99, 209, 196, 185,
+          110, 78, 70, 6, 54, 222, 117, 67, 250, 130, 241, 230, 26, 139, 135, 191, 7,
+          98, 41, 5, 177, 192, 81, 220, 33, 27, 108, 35, 178, 163, 205, 40, 107, 134,
+          159, 110, 165, 95, 135, 165, 210, 194, 88, 52, 186, 207, 151, 14, 72, 180, 78,
+          22, 239, 61>>
+      {:ok, _, new_state} = Packet.decode_packet(packet, state)
+
+      assert [6340157961025832961] == new_state.msg_ids_to_ack
     end
 
     test "decodes raw packet" do
@@ -182,7 +221,7 @@ defmodule MTProto.PacketTest do
           181, 57, 206, 195, 249, 216, 124, 149, 31, 131, 162, 14, 203, 22, 4, 124, 193,
           23, 27, 237, 164, 89, 232, 158, 129, 140, 174, 191, 170, 201, 190, 241, 78>>
 
-      assert {:ok, expected_packet} == Packet.decode_packet(packet, state)
+      assert {:ok, expected_packet, state} == Packet.decode_packet(packet, state)
     end
   end
 end

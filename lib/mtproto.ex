@@ -3,7 +3,7 @@ defmodule MTProto do
 
   require Logger
 
-  alias MTProto.{Auth, Crypto, DC, Packet, Response}
+  alias MTProto.{Auth, Crypto, DC, Math, Packet, Response}
 
   def start_link(opts) do
     Connection.start_link(__MODULE__, opts)
@@ -29,7 +29,7 @@ defmodule MTProto do
     Connection.call(client, :close)
   end
 
-  # ...
+  # gen_server callbacks
 
   defmodule State do
     @moduledoc """
@@ -72,7 +72,6 @@ defmodule MTProto do
   end
 
   def init(opts) do
-    notifier = opts[:notifier]
     session_id = Keyword.get(opts, :session_id, Crypto.make_session_id)
     msg_seqno = Keyword.get(opts, :msg_seqno, 0)
 
@@ -133,7 +132,7 @@ defmodule MTProto do
   end
   def handle_call({:send, request}, _, %{socket: socket} = state) do
     case send_rpc_request(socket, request, state) do
-      {:ok, state} -> {:reply, :ok, state}
+      {:ok, state, message_id} -> {:reply, {:ok, message_id}, state}
       {:error, reason, state} -> {:disconnect, {:error, reason}, state}
     end
   end
@@ -168,6 +167,8 @@ defmodule MTProto do
       send(self, :authorized)
     end
 
+    schedule_ack()
+
     {:noreply, %{state|reconnect: nil}}
   end
   def handle_info({:reconnect, {:change_dc, dc_id} = reason}, state) do
@@ -181,7 +182,7 @@ defmodule MTProto do
   def handle_info(:authorized, %{socket: socket} = state) do
     # init connection
     case send_rpc_request(socket, init_connection_request(), state) do
-      {:ok, state} -> {:noreply, state}
+      {:ok, state, _} -> {:noreply, state}
       {:error, reason, state} -> {:disconnect, {:error, reason}, state}
     end
   end
@@ -191,6 +192,20 @@ defmodule MTProto do
         {:noreply, state}
       {:error, reason} ->
         {:disconnect, {:error, reason}, state}
+    end
+  end
+  def handle_info(:ack_msg_ids, %{msg_ids_to_ack: acks} = state) do
+    if state.auth_state == :encrypted && length(acks) > 0 do
+      case send_rpc_request(state.socket, msgs_ack(acks), state) do
+        {:ok, state, _} ->
+          schedule_ack()
+          {:noreply, %{state|msg_ids_to_ack: []}}
+        {:error, reason, state} ->
+          {:disconnect, {:error, reason}, state}
+      end
+    else
+      schedule_ack()
+      {:noreply, state}
     end
   end
   def handle_info({:tcp, socket, packet}, state) do
@@ -203,9 +218,9 @@ defmodule MTProto do
         decode_result = Packet.decode_packet(packet, state)
 
         case decode_result do
-          {:error, reason} ->
+          {:error, reason, state} ->
             {:stop, {:error, reason}, state}
-          {:ok, decoded_packet} ->
+          {:ok, decoded_packet, state} ->
             case state.auth_state do
               :encrypted ->
                 state = Response.handle(state, decoded_packet)
@@ -217,14 +232,14 @@ defmodule MTProto do
         end
     end
   end
-  def handle_info({:tcp_closed, socket}, state) do
+  def handle_info({:tcp_closed, _socket}, state) do
     {:disconnect, :tcp_closed, state}
   end
   def handle_info(_request, state) do
     {:noreply, state}
   end
 
-  def terminate(_reason, state) do
+  def terminate(_reason, _state) do
     # :gen_tcp.close(state.socket)
   end
 
@@ -250,18 +265,23 @@ defmodule MTProto do
         query: %TL.Help.GetConfig{}}}
   end
 
+  defp msgs_ack(acks) do
+    %TL.MTProto.Msgs.Ack{msg_ids: acks}
+  end
+
   defp send_to_notifier(state, message) do
     send(state.notifier, {:tl, message})
   end
 
   defp send_rpc_request(socket, request, state) do
-    {packet, state} = Packet.encode(request, state)
+    message_id = Math.make_message_id()
+    {packet, state} = Packet.encode(request, state, message_id)
 
     send_to_notifier(state, {:msg_seqno, state.msg_seqno})
 
     case :gen_tcp.send(socket, packet) do
       :ok ->
-        {:ok, state}
+        {:ok, state, message_id}
       {:error, reason} ->
         {:error, reason, state}
     end
@@ -273,6 +293,14 @@ defmodule MTProto do
 
   defp choose_server(state) do
     DC.choose(state.reconnect, state.dc, state.dc_options)
+  end
+
+  defp schedule_ack do
+    Process.send_after(self, :ack_msg_ids, ack_timeout)
+  end
+
+  defp ack_timeout do
+    config(:ack_timeout, 500)
   end
 
   defp config(key, default \\ nil) do

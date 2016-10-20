@@ -95,6 +95,13 @@ defmodule MTProto.Math do
     bor(number, 1)
   end
 
+  @doc """
+  Just `number & 1`
+  """
+  def band1(number) do
+    band(number, 1)
+  end
+
   ### Pollard implementation
 
   defp gcd(a,0), do: abs(a)

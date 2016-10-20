@@ -1,5 +1,4 @@
 defmodule MTProto.Crypto do
-  alias TL.Utils
   alias MTProto.Math
 
   def encrypt_packet(packet, auth_key, auth_key_hash) do

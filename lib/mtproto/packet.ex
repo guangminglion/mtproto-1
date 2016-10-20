@@ -9,13 +9,14 @@ defmodule MTProto.Packet do
   # TODO
   @doc """
   """
-  def encode(request, %{auth_state: :encrypted} = state, message_id \\ Math.make_message_id()) do
+  def encode(request, %{auth_state: :encrypted} = state, message_id) do
     packet = Serializer.encode(request)
-    msg_seqno = if need_ack?(request) do
-      Math.bor1(state.msg_seqno)
-    else
-      state.msg_seqno
-    end
+    {msg_seqno, state} =
+      if need_ack?(request) do
+        {Math.bor1(state.msg_seqno), %{state|msg_ids: [message_id | state.msg_ids]}}
+      else
+        {state.msg_seqno, state}
+      end
 
     packet_with_meta =
       <<state.server_salt :: binary-size(8),
@@ -32,8 +33,7 @@ defmodule MTProto.Packet do
 
     packet = encode_packet_size(encrypted_packet)
 
-    {packet, %{state|msg_seqno: state.msg_seqno + 2,
-                     msg_ids: [message_id | state.msg_ids]}}
+    {packet, %{state|msg_seqno: state.msg_seqno + 2}}
   end
 
   @doc """
@@ -100,11 +100,21 @@ defmodule MTProto.Packet do
       packet :: binary-size(packet_size),
       _rest :: binary>> = decrypted_packet
 
-    Serializer.decode(packet)
+    state =
+      if Math.band1(msg_seqno) == 1 do
+        %{state|msg_ids_to_ack: [message_id|state.msg_ids_to_ack]}
+      else
+        state
+      end
+
+    case Serializer.decode(packet) do
+      {:ok, packet} -> {:ok, packet, state}
+      {:error, reason} -> {:error, reason, state}
+    end
   end
   def decode_packet(<<_auth_key_id :: 64, _message_id :: little-size(64),
-                      packet_size :: little-size(32), packet :: binary-size(packet_size)>>, _state) do
-    {:ok, packet}
+                      packet_size :: little-size(32), packet :: binary-size(packet_size)>>, state) do
+    {:ok, packet, state}
   end
 
   def need_ack?(%TL.MTProto.Ping{}), do: false

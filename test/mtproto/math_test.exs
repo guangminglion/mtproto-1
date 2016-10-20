@@ -125,4 +125,9 @@ defmodule MTProto.MathTest do
   test "#bor1" do
     assert 3 == Math.bor1(2)
   end
+
+  test "#band1" do
+    assert 0 == Math.band1(10)
+    assert 1 == Math.band1(11)
+  end
 end

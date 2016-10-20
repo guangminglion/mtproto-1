@@ -86,14 +86,15 @@ defmodule MTProto.ResponseTest do
   end
 
   describe "rpc_result" do
-    test "adds msg_id to msg_ids_to_ack in state", %{state: state} do
+    test "removes msg_id from msg_ids in state", %{state: state} do
+      state = %{state|msg_ids: [1, 6343121433228688616, 2]}
       result =
         %TL.MTProto.Rpc.Result{
           req_msg_id: 6343121433228688616,
           result: %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}}
       new_state = Response.handle(state, result)
 
-      assert [6343121433228688616] == new_state.msg_ids_to_ack
+      assert [1, 2] == new_state.msg_ids
     end
 
     test "handles rpc as another result", %{state: state} do

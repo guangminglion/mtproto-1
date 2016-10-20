@@ -184,7 +184,7 @@ defmodule MTProtoTest do
     end
 
     test "decodes packet when it's complete" do
-      with_mocks [tcp_mocks, packet_decode_packet_mocks({:error, :packet_decoded})] do
+      with_mocks [tcp_mocks, packet_decode_packet_mocks({:error, :packet_decoded, %{}})] do
         Process.flag(:trap_exit, true)
 
         c = start_client
@@ -218,6 +218,33 @@ defmodule MTProtoTest do
     end
   end
 
+  describe "msgs_ack" do
+    test "periodically send acks" do
+      with_mocks [tcp_mocks] do
+        packet = TL.Serializer.encode(build(:config))
+        packet_with_meta =
+          <<0 :: size(64), 0 :: size(64), # server_salt and session_id
+            42 :: little-size(64), # message_id
+            1  :: little-size(32), # msg_seqno
+            byte_size(packet) :: little-size(32),
+            packet :: binary>>
+        packet_with_size = Packet.encode_packet_size(packet_with_meta)
+
+        c = start_authorized_client
+
+        with_mocks [crypto_decrypt_packet_mocks] do
+          send_as_server_raw(c, packet_with_size)
+          assert_receive {:tl, {:config, :server_config, _}}
+          assert [42] == state(c, :msg_ids_to_ack)
+        end
+
+        send(c, :ack_msg_ids)
+        :timer.sleep(100)
+        assert [] == state(c, :msg_ids_to_ack)
+      end
+    end
+  end
+
   describe "#notifier_process" do
     test "sets new notifier process" do
       with_mocks [tcp_mocks] do
@@ -236,10 +263,11 @@ defmodule MTProtoTest do
         c = start_client
         request = %TL.MTProto.Ping{ping_id: 1}
 
-        :ok = MTProto.send_request(c, request)
+        {:ok, message_id} = MTProto.send_request(c, request)
 
-        assert called Packet.encode(request, state(c))
+        assert called Packet.encode(request, state(c), message_id)
         assert called :gen_tcp.send(self, <<42>>)
+        assert message_id
       end
     end
 
@@ -342,7 +370,11 @@ defmodule MTProtoTest do
   defp packet_decode_mocks do
     {Packet, [:passthrough],
       decode: fn(packet) -> {:ok, packet, <<>>} end,
-      decode_packet: fn(packet, _state) -> TL.Serializer.decode(packet) end}
+      decode_packet:
+        fn(packet, state) ->
+          {:ok, packet} = TL.Serializer.decode(packet)
+          {:ok, packet, state}
+        end}
   end
 
   defp packet_decode_packet_mocks(result) do
@@ -352,7 +384,12 @@ defmodule MTProtoTest do
 
   defp packet_encode_mocks(result) do
     {Packet, [:passthrough],
-      encode: fn(_request, state) -> {result, state} end}
+      encode: fn(_request, state, _message_id) -> {result, state} end}
+  end
+
+  defp crypto_decrypt_packet_mocks do
+    {Crypto, [:passthrough],
+      decrypt_packet: fn(packet, _auth_key) -> packet end}
   end
 
   defp dc_mocks(host \\ 'localhost', port \\ 439) do

@@ -49,7 +49,7 @@ defmodule MTProto.AuthTest do
         end
 
       {:ok, packet, _} = Packet.decode(packet)
-      {:ok, packet} = Packet.decode_packet(packet, state)
+      {:ok, packet, _} = Packet.decode_packet(packet, state)
       {:ok, req_dh_params} = TL.MTProto.decode(packet)
 
       assert <<1229739323 :: 32>> == req_dh_params.p
@@ -148,7 +148,7 @@ defmodule MTProto.AuthTest do
         end
 
       {:ok, packet, _} = Packet.decode(packet)
-      {:ok, packet} = Packet.decode_packet(packet, state)
+      {:ok, packet, _} = Packet.decode_packet(packet, state)
       {:ok, set_client_dh_params} = TL.MTProto.decode(packet)
 
       assert TL.MTProto.Set.Client.DH.Params == set_client_dh_params.__struct__
