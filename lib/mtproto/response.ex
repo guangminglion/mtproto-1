@@ -1,12 +1,12 @@
 defmodule MTProto.Response do
-  def handle(state, result) do
+  def handle(state, result, meta) do
     case result do
       %TL.MTProto.Msg.Container{messages: messages} ->
         Enum.reduce(messages, state, fn(message, state) ->
-          handle(state, message)
+          handle(state, message, meta)
         end)
       %TL.MTProto.Message{seqno: _seqno, msg_id: _msg_id, body: body} ->
-        handle(state, body)
+        handle(state, body, meta)
       %TL.MTProto.Msgs.Ack{msg_ids: msg_ids} ->
         new_msg_ids =
           Enum.reduce(msg_ids, state.msg_ids, fn(msg_id, msg_ids_state) ->
@@ -35,7 +35,7 @@ defmodule MTProto.Response do
         send_to_notifier(state, {:error, code, message})
         state
       %TL.MTProto.Rpc.Result{req_msg_id: req_msg_id, result: result} ->
-        state = handle(state, result)
+        state = handle(state, result, meta)
         new_msg_ids = Map.delete(state.msg_ids, req_msg_id)
         %{state|msg_ids: new_msg_ids}
       %TL.MTProto.Bad.Server.Salt{new_server_salt: server_salt} ->
@@ -51,7 +51,7 @@ defmodule MTProto.Response do
         state
       %TL.MTProto.Gzip.Packed{packed_data: packed_data} ->
         {:ok, data} = TL.Serializer.decode(:zlib.gunzip(packed_data))
-        handle(state, data)
+        handle(state, data, meta)
       # stores this_dc and dc list, changes when server fails
       # or returns Rpc.Error, or accidentally disconnected
       %TL.Config{dc_options: dc_options, this_dc: dc} = config ->

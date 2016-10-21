@@ -6,6 +6,10 @@ defmodule MTProto.Packet do
   alias TL.{Utils, Serializer}
   alias MTProto.{Crypto, Math}
 
+  defmodule Meta do
+    defstruct [:message_id, :msg_seqno]
+  end
+
   # TODO
   @doc """
   """
@@ -81,6 +85,9 @@ defmodule MTProto.Packet do
     {:ok, packet, rest}
   end
 
+  @spec decode_packet(binary, %MTProto.State{}) ::
+    {:ok, struct | binary, %Meta{}, %MTProto.State{}}
+
   def decode_packet(<<error_reason :: little-signed-integer-size(32)>>, _state) do
     {:error, error_reason}
   end
@@ -104,13 +111,13 @@ defmodule MTProto.Packet do
       end
 
     case Serializer.decode(packet) do
-      {:ok, packet} -> {:ok, packet, state}
+      {:ok, packet} -> {:ok, packet, %Meta{message_id: message_id, msg_seqno: msg_seqno}, state}
       {:error, reason} -> {:error, reason, state}
     end
   end
-  def decode_packet(<<_auth_key_id :: 64, _message_id :: little-size(64),
+  def decode_packet(<<_auth_key_id :: 64, message_id :: little-size(64),
                       packet_size :: little-size(32), packet :: binary-size(packet_size)>>, state) do
-    {:ok, packet, state}
+    {:ok, packet, %Meta{message_id: message_id}, state}
   end
 
   def append_request_with_id(state, request, message_id, true) do

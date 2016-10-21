@@ -21,6 +21,10 @@ defmodule MTProto.Factory do
       msg_ids_to_ack: []}
   end
 
+  def packet_meta_factory do
+    %MTProto.Packet.Meta{}
+  end
+
   def res_pq_factory do
     %TL.MTProto.ResPQ{
       nonce: Crypto.make_nonce(16),

@@ -220,10 +220,10 @@ defmodule MTProto do
         case decode_result do
           {:error, reason, state} ->
             {:stop, {:error, reason}, state}
-          {:ok, decoded_packet, state} ->
+          {:ok, decoded_packet, meta, state} ->
             case state.auth_state do
               :encrypted ->
-                state = Response.handle(state, decoded_packet)
+                state = Response.handle(state, decoded_packet, meta)
                 next_packet(socket)
                 {:noreply, state}
               _ ->

@@ -373,7 +373,7 @@ defmodule MTProtoTest do
       decode_packet:
         fn(packet, state) ->
           {:ok, packet} = TL.Serializer.decode(packet)
-          {:ok, packet, state}
+          {:ok, packet, %Packet.Meta{}, state}
         end}
   end
 
