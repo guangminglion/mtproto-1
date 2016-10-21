@@ -11,14 +11,14 @@ defmodule MTProto.ResponseTest do
 
   describe "msg_container" do
     test "handle list of messages in it", %{state: state} do
-      state = %{state|msg_ids: [6343121433228688616]}
-
       message1 =
         %TL.MTProto.New.Session.Created{
           first_msg_id: 6343121433228688616, server_salt: 12316263358524012731,
           unique_id: 12914591209778918544}
       message2 =
         %TL.MTProto.Msgs.Ack{msg_ids: [6343121433228688616]}
+
+      state = %{state|msg_ids: %{6343121433228688616 => message1}}
 
       result =
         %TL.MTProto.Msg.Container{
@@ -29,7 +29,7 @@ defmodule MTProto.ResponseTest do
 
       new_state = Response.handle(state, result)
 
-      assert [] == new_state.msg_ids
+      assert %{} == new_state.msg_ids
       assert <<12316263358524012731 :: little-size(64)>> == new_state.server_salt
       assert_receive {:tl, {:authorized, _, _, _}}
     end
@@ -53,12 +53,12 @@ defmodule MTProto.ResponseTest do
 
   describe "msgs_ack" do
     test "removes msg_id list from state", %{state: state} do
-      state = %{state|msg_ids: [6343121433228688616, 6343121433228688723]}
+      state = %{state|msg_ids: %{6343121433228688616 => %{}, 6343121433228688723 => %{}}}
 
       result = %TL.MTProto.Msgs.Ack{msg_ids: [6343121433228688616]}
       new_state = Response.handle(state, result)
 
-      assert [6343121433228688723] == new_state.msg_ids
+      assert %{6343121433228688723 => %{}} == new_state.msg_ids
     end
   end
 
@@ -87,14 +87,14 @@ defmodule MTProto.ResponseTest do
 
   describe "rpc_result" do
     test "removes msg_id from msg_ids in state", %{state: state} do
-      state = %{state|msg_ids: [1, 6343121433228688616, 2]}
+      state = %{state|msg_ids: %{1 => %{}, 6343121433228688616 => %{}, 2 => %{}}}
       result =
         %TL.MTProto.Rpc.Result{
           req_msg_id: 6343121433228688616,
           result: %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}}
       new_state = Response.handle(state, result)
 
-      assert [1, 2] == new_state.msg_ids
+      assert %{1 => %{}, 2 => %{}} == new_state.msg_ids
     end
 
     test "handles rpc as another result", %{state: state} do

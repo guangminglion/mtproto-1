@@ -11,12 +11,8 @@ defmodule MTProto.Packet do
   """
   def encode(request, %{auth_state: :encrypted} = state, message_id) do
     packet = Serializer.encode(request)
-    {msg_seqno, state} =
-      if need_ack?(request) do
-        {Math.bor1(state.msg_seqno), %{state|msg_ids: [message_id | state.msg_ids]}}
-      else
-        {state.msg_seqno, state}
-      end
+    state = append_request_with_id(state, request, message_id, content_related?(request))
+    {msg_seqno, msg_seqno_state} = make_msg_seqno(state.msg_seqno, content_related?(request))
 
     packet_with_meta =
       <<state.server_salt :: binary-size(8),
@@ -33,7 +29,7 @@ defmodule MTProto.Packet do
 
     packet = encode_packet_size(encrypted_packet)
 
-    {packet, %{state|msg_seqno: state.msg_seqno + 2}}
+    {packet, %{state|msg_seqno: msg_seqno_state}}
   end
 
   @doc """
@@ -117,7 +113,21 @@ defmodule MTProto.Packet do
     {:ok, packet, state}
   end
 
-  def need_ack?(%TL.MTProto.Ping{}), do: false
-  def need_ack?(%TL.MTProto.Msgs.Ack{}), do: false
-  def need_ack?(_), do: true
+  def append_request_with_id(state, request, message_id, true) do
+    %{state|msg_ids: Map.put(state.msg_ids, message_id, request)}
+  end
+  def append_request_with_id(state, _request, _message_id, false) do
+    state
+  end
+
+  def make_msg_seqno(current_seqno, true) do
+    {current_seqno * 2 + 1, current_seqno + 1}
+  end
+  def make_msg_seqno(current_seqno, false) do
+    {current_seqno * 2, current_seqno}
+  end
+
+  def content_related?(%TL.MTProto.Ping{}), do: false
+  def content_related?(%TL.MTProto.Msgs.Ack{}), do: false
+  def content_related?(_), do: true
 end

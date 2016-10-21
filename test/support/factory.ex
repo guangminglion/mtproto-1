@@ -8,7 +8,7 @@ defmodule MTProto.Factory do
   def state_factory do
     %MTProto.State{
       auth_state: :connected, notifier: self, packet_buffer: <<>>,
-      session_id: Crypto.make_session_id, msg_seqno: 0, msg_ids: [],
+      session_id: Crypto.make_session_id, msg_seqno: 0, msg_ids: %{},
       msg_ids_to_ack: []}
   end
 
@@ -17,7 +17,7 @@ defmodule MTProto.Factory do
       auth_state: :encrypted, auth_key: @auth_key, auth_key_hash: Crypto.auth_key_hash(@auth_key),
       server_salt: <<148, 211, 200, 232, 215, 235, 188, 204>>,
       session_id: <<237, 3, 178, 105, 5, 99, 189, 59>>,
-      notifier: self, packet_buffer: <<>>, msg_seqno: 0, msg_ids: [],
+      notifier: self, packet_buffer: <<>>, msg_seqno: 0, msg_ids: %{},
       msg_ids_to_ack: []}
   end
 

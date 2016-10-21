@@ -24,23 +24,42 @@ defmodule MTProto.PacketTest do
     end
 
     test "updates state with msg_seqno and msg_ids", %{state: state} do
-      {_packet, state} = Packet.encode(
-        %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}, state, 42)
+      request = %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}
+      {_packet, state} = Packet.encode(request, state, 42)
 
-      assert 2 == state.msg_seqno
-      assert [42] == state.msg_ids
+      assert 1 == state.msg_seqno
+      assert %{42 => request} == state.msg_ids
     end
 
     test "updates state with msg_seqno", %{state: state} do
+      {_packet, state} = Packet.encode(
+        %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}, state, 42)
+
+      assert 1 == state.msg_seqno
+
+      {_packet, state} = Packet.encode(
+        %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}, state, 43)
+      {_packet, state} = Packet.encode(
+        %TL.Updates{updates: [], users: [], chats: [], date: 0, seq: 0}, state, 44)
+
+      assert 3 == state.msg_seqno
+    end
+
+    test "doesn't updates state with msg_seqno when it's not need to ack", %{state: state} do
       {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 1}, state, 42)
 
-      assert 2 == state.msg_seqno
+      assert 0 == state.msg_seqno
+
+      {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 2}, state, 43)
+      {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 3}, state, 44)
+
+      assert 0 == state.msg_seqno
     end
 
     test "doesn't updates state with msg_ids when it's not need to ack", %{state: state} do
       {_packet, state} = Packet.encode(%TL.MTProto.Ping{ping_id: 1}, state, 42)
 
-      refute [42] == state.msg_ids
+      assert %{} == state.msg_ids
     end
   end
 
@@ -222,6 +241,61 @@ defmodule MTProto.PacketTest do
           23, 27, 237, 164, 89, 232, 158, 129, 140, 174, 191, 170, 201, 190, 241, 78>>
 
       assert {:ok, expected_packet, state} == Packet.decode_packet(packet, state)
+    end
+  end
+
+  describe "#append_request_with_id" do
+    setup do
+      {:ok, state: build(:state)}
+    end
+
+    test "it appends request to the state with message_id if it content related", %{state: state} do
+      request = %TL.Messages.GetMessages{id: [1, 2]}
+
+      assert %{state|msg_ids: %{42 => request}}
+          == Packet.append_request_with_id(state, request, 42, true)
+    end
+
+    test "it skips request if it's non-content", %{state: state} do
+      request = %TL.MTProto.Ping{ping_id: 1}
+
+      assert state == Packet.append_request_with_id(state, request, 43, false)
+    end
+  end
+
+  describe "#make_msg_seqno" do
+    setup do
+      {:ok, msg_seqno: 0}
+    end
+
+    test "returns new msg_seq_no and value to update in state", %{msg_seqno: msg_seqno} do
+      assert {1, 1} == Packet.make_msg_seqno(msg_seqno, true)
+    end
+
+    test "new msg_seqno is (old_msg_seqno * 2 + 1) for content related" do
+      assert {85, 43} == Packet.make_msg_seqno(42, true)
+    end
+
+    test "returns double sized msg_seq_no and old state", %{msg_seqno: msg_seqno} do
+      assert {0, msg_seqno} == Packet.make_msg_seqno(msg_seqno, false)
+    end
+
+    test "new msg_seqno is (old_msg_seqno * 2) for non-content packets" do
+      assert {84, 42} == Packet.make_msg_seqno(42, false)
+    end
+  end
+
+  describe "#content_related?" do
+    test "returns false for ping" do
+      refute Packet.content_related?(%TL.MTProto.Ping{ping_id: 1})
+    end
+
+    test "returns false for msgs_ack" do
+      refute Packet.content_related?(%TL.MTProto.Msgs.Ack{msg_ids: [1, 2]})
+    end
+
+    test "returns true for any other structs" do
+      assert Packet.content_related?(%TL.Messages.GetMessages{id: [1, 2]})
     end
   end
 end

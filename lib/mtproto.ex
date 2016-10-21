@@ -77,7 +77,7 @@ defmodule MTProto do
 
     {:connect, :init,
       %State{auth_state: :connected, notifier: opts[:notifier], packet_buffer: <<>>,
-             session_id: session_id, msg_seqno: msg_seqno, msg_ids: [], msg_ids_to_ack: []}}
+             session_id: session_id, msg_seqno: msg_seqno, msg_ids: %{}, msg_ids_to_ack: []}}
   end
 
   def connect(_, %{socket: nil} = state) do

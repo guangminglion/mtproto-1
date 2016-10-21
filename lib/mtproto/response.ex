@@ -8,7 +8,12 @@ defmodule MTProto.Response do
       %TL.MTProto.Message{seqno: _seqno, msg_id: _msg_id, body: body} ->
         handle(state, body)
       %TL.MTProto.Msgs.Ack{msg_ids: msg_ids} ->
-        %{state|msg_ids: state.msg_ids -- msg_ids}
+        new_msg_ids =
+          Enum.reduce(msg_ids, state.msg_ids, fn(msg_id, msg_ids_state) ->
+            Map.delete(msg_ids_state, msg_id)
+          end)
+
+        %{state|msg_ids: new_msg_ids}
       %TL.MTProto.New.Session.Created{server_salt: server_salt} ->
         # convert to binary
         server_salt = <<server_salt :: little-size(64)>>
@@ -31,7 +36,8 @@ defmodule MTProto.Response do
         state
       %TL.MTProto.Rpc.Result{req_msg_id: req_msg_id, result: result} ->
         state = handle(state, result)
-        %{state|msg_ids: state.msg_ids -- [req_msg_id]}
+        new_msg_ids = Map.delete(state.msg_ids, req_msg_id)
+        %{state|msg_ids: new_msg_ids}
       %TL.MTProto.Bad.Server.Salt{new_server_salt: server_salt} ->
         # convert to binary
         server_salt = <<server_salt :: little-size(64)>>

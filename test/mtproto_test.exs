@@ -207,13 +207,13 @@ defmodule MTProtoTest do
       with_mocks [tcp_mocks] do
         c = start_authorized_client
 
+        assert_receive {:tl, {:msg_seqno, 1}}
         assert_receive {:tl, {:msg_seqno, 2}}
-        assert_receive {:tl, {:msg_seqno, 4}}
 
         # send any packet to make client increment seqno
         send(c, {:reconnect, :random})
 
-        assert_receive {:tl, {:msg_seqno, 6}}
+        assert_receive {:tl, {:msg_seqno, 3}}
       end
     end
   end
