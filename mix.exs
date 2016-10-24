@@ -3,7 +3,7 @@ defmodule MTProto.Mixfile do
 
   def project do
     [app: :mtproto,
-     version: "57.0.0-alpha",
+     version: "57.1.0-alpha",
      elixir: "~> 1.3",
      build_embedded: Mix.env == :prod,
      start_permanent: Mix.env == :prod,
