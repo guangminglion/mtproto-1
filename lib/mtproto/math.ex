@@ -66,10 +66,20 @@ defmodule MTProto.Math do
   @doc """
   Creates more complex message_id value, to use in TL protocol
   """
-  def make_message_id do
+  def make_message_id(offset \\ 0) do
     time = :erlang.system_time(:nanosecond)
     nano = 1000*1000*1000
-    bor(round(time / nano) <<< 32, band(rem(time, nano), -4))
+    (round((time / nano) + offset) <<< 32) ||| (rem(time, nano) &&& -4)
+  end
+
+  @doc """
+  Checks generated message_id with the current one
+  """
+  def check_message_id(current, generated) when current >= generated do
+    current + 4
+  end
+  def check_message_id(_current, generated) do
+    generated
   end
 
   @doc """

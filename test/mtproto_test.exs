@@ -207,13 +207,13 @@ defmodule MTProtoTest do
       with_mocks [tcp_mocks] do
         c = start_authorized_client
 
-        assert_receive {:tl, {:msg_seqno, 1}}
-        assert_receive {:tl, {:msg_seqno, 2}}
+        assert_receive {:tl, {:msg_id_seqno, _, 1}}
+        assert_receive {:tl, {:msg_id_seqno, _, 2}}
 
         # send any packet to make client increment seqno
         send(c, {:reconnect, :random})
 
-        assert_receive {:tl, {:msg_seqno, 3}}
+        assert_receive {:tl, {:msg_id_seqno, _, 3}}
       end
     end
   end
@@ -262,10 +262,11 @@ defmodule MTProtoTest do
       with_mocks [tcp_mocks, packet_encode_mocks(<<42>>)] do
         c = start_client
         request = %TL.MTProto.Ping{ping_id: 1}
+        client_state = state(c)
 
         {:ok, message_id} = MTProto.send_request(c, request)
 
-        assert called Packet.encode(request, state(c), message_id)
+        assert called Packet.encode(request, client_state, message_id)
         assert called :gen_tcp.send(self, <<42>>)
         assert message_id
       end

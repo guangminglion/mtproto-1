@@ -110,12 +110,31 @@ defmodule MTProto.MathTest do
     assert id1 != id2
   end
 
-  test "#make_message_id" do
-    id1 = Math.make_message_id
-    id2 = Math.make_message_id
+  describe "#make_message_id" do
+    test "without offset" do
+      id1 = Math.make_message_id
+      id2 = Math.make_message_id
 
-    assert id1 != id2
-    assert 0 == rem(id1, 4)
+      assert id1 != id2
+      assert 0 == rem(id1, 4)
+    end
+
+    test "with offset" do
+      <<ts1 :: 32, _ :: 32>> = <<Math.make_message_id :: 64>>
+      <<ts2 :: 32, _ :: 32>> = <<Math.make_message_id(169956) :: 64>>
+
+      assert (ts2 - ts1) == 169956
+    end
+  end
+
+  describe "#check_message_id" do
+    test "returns current + 4" do
+      assert 46 == Math.check_message_id(42, 0)
+    end
+
+    test "returns generated" do
+      assert 42 == Math.check_message_id(0, 42)
+    end
   end
 
   test "#binary_bxor" do

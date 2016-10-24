@@ -63,6 +63,7 @@ defmodule MTProto do
                :auth_state, :auth_params,
                :auth_key, :auth_key_hash, :server_salt,
                :msg_seqno, :msg_ids, :msg_ids_to_ack,
+               :last_message_id,
                :dc_options, :dc,
                :reconnect]
   end
@@ -77,7 +78,8 @@ defmodule MTProto do
 
     {:connect, :init,
       %State{auth_state: :connected, notifier: opts[:notifier], packet_buffer: <<>>,
-             session_id: session_id, msg_seqno: msg_seqno, msg_ids: %{}, msg_ids_to_ack: []}}
+             session_id: session_id, msg_seqno: msg_seqno, msg_ids: %{}, msg_ids_to_ack: [],
+             last_message_id: 0}}
   end
 
   def connect(_, %{socket: nil} = state) do
@@ -274,17 +276,22 @@ defmodule MTProto do
   end
 
   defp send_rpc_request(socket, request, state) do
-    message_id = Math.make_message_id()
+    message_id = make_message_id(state)
     {packet, state} = Packet.encode(request, state, message_id)
 
-    send_to_notifier(state, {:msg_seqno, state.msg_seqno})
+    send_to_notifier(state, {:msg_id_seqno, message_id, state.msg_seqno})
 
     case :gen_tcp.send(socket, packet) do
       :ok ->
-        {:ok, state, message_id}
+        {:ok, %{state|last_message_id: message_id}, message_id}
       {:error, reason} ->
         {:error, reason, state}
     end
+  end
+
+  defp make_message_id(state) do
+    message_id = Math.make_message_id(state.server_time_offset)
+    Math.check_message_id(state.last_message_id, message_id)
   end
 
   defp next_packet(socket) do
