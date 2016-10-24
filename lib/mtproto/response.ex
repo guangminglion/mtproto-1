@@ -46,8 +46,8 @@ defmodule MTProto.Response do
         # notify handler
         send_to_notifier(state, {:config, :server_salt, server_salt})
         %{state|server_salt: server_salt}
-      %TL.MTProto.Bad.Msg.Notification{error_code: code} ->
-        send_to_notifier(state, {:error, code, "bad_msg_id"})
+      %TL.MTProto.Bad.Msg.Notification{bad_msg_id: bad_msg_id, error_code: code} ->
+        send_to_notifier(state, {:error, code, bad_msg_id})
         state
       %TL.MTProto.Gzip.Packed{packed_data: packed_data} ->
         {:ok, data} = TL.Serializer.decode(:zlib.gunzip(packed_data))

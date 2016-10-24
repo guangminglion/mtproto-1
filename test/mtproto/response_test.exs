@@ -145,11 +145,15 @@ defmodule MTProto.ResponseTest do
   end
 
   describe "bad_msg_notification" do
+    setup do
+      {:ok, meta: build(:packet_meta, message_id: 6340157961025832961)}
+    end
+
     test "sends error to notifier", %{state: state, meta: meta} do
-      result = %TL.MTProto.Bad.Msg.Notification{error_code: 32}
+      result = %TL.MTProto.Bad.Msg.Notification{bad_msg_id: 424242, error_code: 32}
       Response.handle(state, result, meta)
 
-      assert_receive {:tl, {:error, 32, "bad_msg_id"}}
+      assert_receive {:tl, {:error, 32, 424242}}
     end
   end
 
