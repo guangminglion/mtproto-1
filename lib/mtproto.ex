@@ -75,11 +75,12 @@ defmodule MTProto do
   def init(opts) do
     session_id = Keyword.get(opts, :session_id, Crypto.make_session_id)
     msg_seqno = Keyword.get(opts, :msg_seqno, 0)
+    last_message_id = Keyword.get(opts, :last_message_id, 0)
 
     {:connect, :init,
       %State{auth_state: :connected, notifier: opts[:notifier], packet_buffer: <<>>,
              session_id: session_id, msg_seqno: msg_seqno, msg_ids: %{}, msg_ids_to_ack: [],
-             last_message_id: 0}}
+             last_message_id: last_message_id}}
   end
 
   def connect(_, %{socket: nil} = state) do
