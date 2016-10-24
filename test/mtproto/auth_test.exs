@@ -152,6 +152,14 @@ defmodule MTProto.AuthTest do
       {:ok, set_client_dh_params} = TL.MTProto.decode(packet)
 
       assert TL.MTProto.Set.Client.DH.Params == set_client_dh_params.__struct__
+
+      server_time =
+        receive do
+          {:sync_server_time, server_time} ->
+            server_time
+        end
+
+      assert 1476868126 == server_time
     end
   end
 

@@ -78,6 +78,9 @@ defmodule MTProto.Auth do
         {:ok, server_dh_inner_data} = TL.MTProto.decode(
           decoded_server_dh_params.answer)
 
+        # send server_time to make offset
+        send(client, {:sync_server_time, server_dh_inner_data.server_time})
+
         # generate b and g_b numbers
         b = Math.make_b
         g_b = Math.make_g_b(server_dh_inner_data.g, b, server_dh_inner_data.dh_prime)

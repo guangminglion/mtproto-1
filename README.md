@@ -11,7 +11,7 @@ MTProto (protocol) transport implementation in Elixir, acts like gen_tcp and oth
 * Add checks for numbers in DH algorithm;
 * Checks for salts and nonce hashes during authorization;
 * Data Center migration;
-* Server time synchronization;
+* Server time synchronization (in RPC error 16/17);
 * Handling RPC errors (bad_msg_notification).
 
 ---

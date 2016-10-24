@@ -63,7 +63,7 @@ defmodule MTProto do
                :auth_state, :auth_params,
                :auth_key, :auth_key_hash, :server_salt,
                :msg_seqno, :msg_ids, :msg_ids_to_ack,
-               :last_message_id,
+               :last_message_id, :server_time_offset,
                :dc_options, :dc,
                :reconnect]
   end
@@ -76,11 +76,12 @@ defmodule MTProto do
     session_id = Keyword.get(opts, :session_id, Crypto.make_session_id)
     msg_seqno = Keyword.get(opts, :msg_seqno, 0)
     last_message_id = Keyword.get(opts, :last_message_id, 0)
+    server_time_offset = Keyword.get(opts, :server_time_offset, 0)
 
     {:connect, :init,
       %State{auth_state: :connected, notifier: opts[:notifier], packet_buffer: <<>>,
              session_id: session_id, msg_seqno: msg_seqno, msg_ids: %{}, msg_ids_to_ack: [],
-             last_message_id: last_message_id}}
+             last_message_id: last_message_id, server_time_offset: server_time_offset}}
   end
 
   def connect(_, %{socket: nil} = state) do
@@ -210,6 +211,10 @@ defmodule MTProto do
       schedule_ack()
       {:noreply, state}
     end
+  end
+  def handle_info({:sync_server_time, server_time}, state) do
+    offset = server_time - :erlang.system_time(:seconds)
+    {:noreply, %{state|server_time_offset: offset}}
   end
   def handle_info({:tcp, socket, packet}, state) do
     case Packet.decode(<<state.packet_buffer :: binary, packet :: binary>>) do

@@ -245,6 +245,20 @@ defmodule MTProtoTest do
     end
   end
 
+  describe "sync_server_time" do
+    test "updates server_time_offset" do
+      with_mocks [tcp_mocks] do
+        now = :erlang.system_time(:seconds)
+        server_time = 1476868126
+
+        c = start_client
+        send(c, {:sync_server_time, 1476868126})
+
+        assert (server_time - now) == state(c, :server_time_offset)
+      end
+    end
+  end
+
   describe "#notifier_process" do
     test "sets new notifier process" do
       with_mocks [tcp_mocks] do
